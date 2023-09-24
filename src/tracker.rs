@@ -21,6 +21,6 @@ impl<T> Future for Tracker<T> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        Pin::new(&mut this.receiver).poll(cx)
+        Pin::new(&mut this.receiver).poll(cx).map(Result::ok)
     }
 }
