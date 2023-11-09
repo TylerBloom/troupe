@@ -26,9 +26,9 @@ pub struct StreamClient<M> {
     recv: BroadcastStream<M>,
 }
 
-// This type is a placeholder for tokio_stream's broadcast stream. Since we can't create new stream
-// handles from an existing broadcast stream, we will have to manually implement `Stream` until
-// that is addressed.
+// TODO: This implementation is incorrect. Because of implementation details, the broadcast stream
+// in tokio_streams will not implement `AsRef`. So, this stream will need to either hold a second
+// copy of the channel or share a common one behind an `Arc`.
 #[pin_project]
 struct BroadcastStream<M>(#[pin] broadcast::Receiver<M>);
 

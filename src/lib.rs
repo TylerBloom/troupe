@@ -2,9 +2,11 @@ pub mod compat;
 pub mod joint;
 pub mod sink;
 pub mod stream;
+pub mod scheduler;
 
 pub use async_trait::async_trait;
 use joint::JointClient;
+use scheduler::Scheduler;
 use sink::{SinkActor, SinkClient};
 use stream::{StreamActor, StreamClient};
 pub use tokio::sync::oneshot::{
@@ -173,16 +175,7 @@ where
     }
 }
 
-pub struct Scheduler<A: ActorState> {
-    recv: SendableWrapper<SelectAll<ActorStream<A>>>,
-    #[allow(clippy::type_complexity)]
-    queue: SendableWrapper<FuturesUnordered<Pin<Box<dyn SendableFuture<Output = A::Message>>>>>,
-    tasks: SendableWrapper<FuturesUnordered<Pin<Box<dyn SendableFuture<Output = ()>>>>>,
-    // TODO:
-    //  - Add a `FuturesUnordered` for futures that are 'static  + Send and yield nothing
-    //  - Add a queue for timers so that they are not lumped in the `queue`.
-    //    - Make those timers cancelable by assoicating each on with an id (usize)
-}
+/* -------- To move -------- */
 
 #[pin_project]
 pub struct Timer<T> {
@@ -208,117 +201,4 @@ impl<T> Future for Timer<T> {
             .poll_unpin(cx)
             .map(|_| self.msg.take().unwrap())
     }
-}
-
-impl<A: ActorState> ActorRunner<A> {
-    fn new(state: A) -> Self {
-        let scheduler = Scheduler::new(recvs);
-        Self { state, scheduler }
-    }
-
-    fn add_broadcaster(&mut self, _broad: broadcast::Sender<A::Output>) {
-        todo!()
-    }
-
-    fn launch(self) {
-        spawn_task(self.run())
-    }
-
-    async fn run(mut self) -> ! {
-        self.state.start_up(&mut self.scheduler).await;
-        loop {
-            tokio::select! {
-                msg = self.scheduler.recv.next() => {
-                    self.state.process(&mut self.scheduler, msg.unwrap()).await;
-                },
-                msg = self.scheduler.queue.next(), if !self.scheduler.queue.is_empty() => {
-                    self.state.process(&mut self.scheduler, msg.unwrap()).await;
-                },
-                _ = self.scheduler.tasks.next(), if !self.scheduler.tasks.is_empty() => {},
-            }
-        }
-    }
-}
-
-impl<A: ActorState> Scheduler<A> {
-    fn new() -> Self {
-        let recv = SendableWrapper::new(select_all(recv));
-        let queue = SendableWrapper::new(FuturesUnordered::new());
-        let tasks = SendableWrapper::new(FuturesUnordered::new());
-        Self { recv, queue, tasks }
-    }
-
-    pub fn add_task<F, I>(&mut self, fut: F)
-    where
-        F: SendableFuture<Output = I>,
-        I: 'static + Into<A::Message>,
-    {
-        self.queue.push(Box::pin(fut.map(Into::into)));
-    }
-
-    pub fn process<F>(&mut self, fut: F)
-    where
-        F: SendableFuture<Output = ()>,
-    {
-        self.tasks.push(Box::pin(fut));
-    }
-
-    pub fn add_stream<S, I>(&mut self, stream: S)
-    where
-        S: SendableStream<Item = I>,
-        I: Into<A::Message>,
-    {
-        self.recv
-            .push(ActorStream::Secondary(Box::new(stream.map(|m| m.into()))));
-    }
-
-    pub fn schedule<M>(&mut self, deadline: Instant, msg: M)
-    where
-        M: 'static + Into<A::Message>,
-    {
-        self.queue.push(Box::pin(Timer::new(deadline, msg.into())));
-    }
-}
-
-impl<A: ActorState> Stream for Scheduler<A> {
-    type Item = A::Message;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let digest = self.recv.poll_next_unpin(cx);
-        if digest.is_ready() {
-            return digest;
-        }
-        let digest = self.queue.poll_next_unpin(cx);
-        match &digest {
-            Poll::Pending | Poll::Ready(None) => Poll::Pending,
-            Poll::Ready(_) => digest,
-        }
-    }
-}
-
-impl<A: ActorState> From<UnboundedReceiver<A::Message>> for ActorStream<A> {
-    fn from(value: UnboundedReceiver<A::Message>) -> Self {
-        Self::Main(UnboundedReceiverStream::new(value))
-    }
-}
-
-enum ActorStream<A: ActorState> {
-    Main(UnboundedReceiverStream<A::Message>),
-    Secondary(Box<dyn SendableStream<Item = A::Message>>),
-}
-
-impl<A: ActorState> Stream for ActorStream<A> {
-    type Item = A::Message;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match *self {
-            ActorStream::Main(ref mut stream) => Pin::new(stream).poll_next(cx),
-            ActorStream::Secondary(ref mut stream) => Pin::new(stream).poll_next(cx),
-        }
-    }
-}
-
-struct ActorRunner<A: ActorState> {
-    state: A,
-    scheduler: Scheduler<A>,
 }
