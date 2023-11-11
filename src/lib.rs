@@ -1,12 +1,12 @@
 pub mod compat;
 pub mod joint;
+pub mod scheduler;
 pub mod sink;
 pub mod stream;
-pub mod scheduler;
 
 pub use async_trait::async_trait;
 use joint::JointClient;
-use scheduler::Scheduler;
+use scheduler::{Scheduler, ActorStream, ActorRunner};
 use sink::{SinkActor, SinkClient};
 use stream::{StreamActor, StreamClient};
 pub use tokio::sync::oneshot::{
@@ -18,18 +18,15 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{
-    stream::{select_all, FuturesUnordered, SelectAll},
-    Future, FutureExt, Stream, StreamExt,
-};
+use futures::{Future, FutureExt, StreamExt, stream::FusedStream};
 use instant::Instant;
 use pin_project::pin_project;
-use tokio::sync::{mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender}, broadcast};
-use tokio_stream::wrappers::UnboundedReceiverStream;
-
-use crate::compat::{
-    sleep_until, spawn_task, SendableFuture, SendableStream, SendableWrapper, Sleep,
+use tokio::sync::{
+    broadcast,
+    mpsc::{unbounded_channel, UnboundedSender},
 };
+
+use crate::compat::{sleep_until, Sleep};
 
 // This state needs to be send because of constraints of `async_trait`. Ideally, it would be
 // `Sendable`.
@@ -73,8 +70,9 @@ pub trait ActorState: 'static + Send + Sized {
 
 pub struct ActorBuilder<A: ActorState> {
     send: UnboundedSender<A::Message>,
+    #[allow(clippy::type_complexity)]
     broadcast: Option<(broadcast::Sender<A::Output>, broadcast::Receiver<A::Output>)>,
-    recv: Vec<ActorStream<A>>,
+    recv: Vec<ActorStream<A::Message>>,
     state: A,
 }
 
@@ -86,12 +84,17 @@ where
     pub fn new(state: A) -> Self {
         let (send, recv) = unbounded_channel();
         let recv = vec![recv.into()];
-        Self { state, send, recv, broadcast: None }
+        Self {
+            state,
+            send,
+            recv,
+            broadcast: None,
+        }
     }
 
     pub fn add_stream<S, I>(&mut self, stream: S)
     where
-        S: SendableStream<Item = I>,
+        S: 'static + Send + Unpin + FusedStream<Item = I>,
         I: Into<A::Message>,
     {
         self.recv
@@ -109,9 +112,12 @@ where
     }
 
     pub fn launch_sink(self) -> SinkClient<A::Message> {
-        let Self { send, recv, state, .. } = self;
+        let Self {
+            send, recv, state, ..
+        } = self;
         let mut runner = ActorRunner::new(state);
-        recv.into_iter().for_each(|r| runner.scheduler.add_stream(r));
+        recv.into_iter()
+            .for_each(|r| runner.add_stream(r.fuse()));
         runner.launch();
         SinkClient::new(send)
     }
@@ -128,14 +134,20 @@ where
 
     pub fn launch_stream<S>(self, stream: S) -> StreamClient<A::Output>
     where
-        S: 'static + Send + Unpin + Stream<Item = A::Message>,
+        S: 'static + Send + Unpin + FusedStream<Item = A::Message>,
     {
-        let Self { send, mut recv, state, broadcast } = self;
+        let Self {
+            mut recv,
+            state,
+            broadcast,
+            ..
+        } = self;
         let (broad, sub) = broadcast.unwrap_or_else(|| broadcast::channel(100));
         recv.push(ActorStream::Secondary(Box::new(stream)));
         let mut runner = ActorRunner::new(state);
         runner.add_broadcaster(broad);
-        recv.into_iter().for_each(|r| runner.scheduler.add_stream(r));
+        recv.into_iter()
+            .for_each(|r| runner.add_stream(r.fuse()));
         runner.launch();
         StreamClient::new(sub)
     }
@@ -156,17 +168,23 @@ where
 
     pub fn launch_with_stream<S>(mut self, stream: S) -> JointClient<A::Message, A::Output>
     where
-        S: 'static + Send + Unpin + Stream<Item = A::Message>,
+        S: 'static + Send + Unpin + FusedStream<Item = A::Message>,
     {
         self.add_stream(stream);
         self.launch()
     }
 
     pub fn launch(self) -> JointClient<A::Message, A::Output> {
-        let Self { send, recv, state, broadcast } = self;
+        let Self {
+            send,
+            recv,
+            state,
+            broadcast,
+        } = self;
         let (broad, sub) = broadcast.unwrap_or_else(|| broadcast::channel(100));
         let mut runner = ActorRunner::new(state);
-        recv.into_iter().for_each(|r| runner.scheduler.add_stream(r));
+        recv.into_iter()
+            .for_each(|r| runner.add_stream(r.fuse()));
         runner.add_broadcaster(broad);
         runner.launch();
         let sink = SinkClient::new(send);

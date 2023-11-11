@@ -1,9 +1,8 @@
 use futures::{
-    stream::{select_all, FusedStream, FuturesUnordered, SelectAll},
-    Stream, StreamExt,
+    stream::{select_all, Fuse, FusedStream, FuturesUnordered, SelectAll},
+    FutureExt, Stream, StreamExt,
 };
 use instant::Instant;
-use pin_project::pin_project;
 use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -13,9 +12,9 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::{compat::spawn_task, ActorState};
+use crate::{compat::spawn_task, ActorState, Timer};
 
-type FuturesCollection<T> = FuturesUnordered<Pin<Box<dyn Future<Output = T>>>>;
+type FuturesCollection<T> = FuturesUnordered<Pin<Box<dyn 'static + Send + Future<Output = T>>>>;
 
 /// The primary bookkeeper for the actor. The state can queue and manage additional futures and
 /// streams with it. The scheduler also tracks if it is possible that another message will be
@@ -27,82 +26,60 @@ pub struct Scheduler<A: ActorState> {
     /// zero, the actor is dead as it can no longer process any messages.
     count: usize,
     /// The inbound streams to the actor.
-    recv: SelectAll<ValvedStream<ActorStream<A::Message>>>,
+    recv: SelectAll<Fuse<ActorStream<A::Message>>>,
     /// Futures that the actor has queued that will yield a message.
     queue: FuturesCollection<A::Message>,
     /// Futures that yield nothing that the scheduler will manage and poll for the actor.
     tasks: FuturesCollection<()>,
+    /// The manager for outbound messages that will be broadcast from the actor.
+    outbound: Option<OutboundQueue<A::Output>>,
     // TODO:
     //  - Add a queue for timers so that they are not lumped in the `queue`.
     //    - Make those timers cancelable by assoicating each on with an id (usize)
     //  - Make all messages and streams abortable with `futures::stream::Abortable`
 }
 
+struct OutboundQueue<M> {
+    send: broadcast::Sender<M>,
+}
+
+impl<M: 'static + Send + Clone> OutboundQueue<M> {
+    fn new(send: broadcast::Sender<M>) -> Self {
+        Self { send }
+    }
+
+    fn send(&mut self, msg: M) {
+        // TODO: Properly handle errors
+        let _ = self.send.send(msg);
+    }
+}
+
 /// The container for the actor state and its scheduler. The runner polls the scheduler, aids in
 /// bookkeeping if the actor is dead or not, and passes messages off to the state.
-struct ActorRunner<A: ActorState> {
+pub(crate) struct ActorRunner<A: ActorState> {
     state: A,
     scheduler: Scheduler<A>,
 }
 
-/// A stream wraps another stream and implements [`FusedStream`] but with a stronger guarantee.
-/// Once the inner stream yields `None`, the stream closes and will never poll the inner stream
-/// again. This is used for bookkeeping in the [`Scheduler`]. The scheduler needs to track the
-/// number of active streams and futures in order to track when the actor is dead.
-#[pin_project]
-struct ValvedStream<S> {
-    /// The inner stream.
-    #[pin]
-    inner: S,
-    /// The tracker that marks the stream as done.
-    done: bool,
-}
-
-impl<S> ValvedStream<S> {
-    /// The constructor for the valved stream.
-    fn new(inner: S) -> Self {
-        Self { inner, done: false }
-    }
-}
-
-impl<S> Stream for ValvedStream<S>
-where
-    S: Unpin + Stream,
-{
-    type Item = S::Item;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.done {
-            return Poll::Pending;
-        }
-        let digest = self.project().inner.poll_next(cx);
-        if let Poll::Ready(None) = &digest {
-            *self.project().done = true;
-        }
-        digest
-    }
-}
-
-impl<S> FusedStream for ValvedStream<S>
-where
-    S: Unpin + Stream,
-{
-    fn is_terminated(&self) -> bool {
-        self.done
-    }
-}
-
 impl<A: ActorState> ActorRunner<A> {
-    fn new(state: A) -> Self {
+    pub(crate) fn new(state: A) -> Self {
         let scheduler = Scheduler::new();
         Self { state, scheduler }
     }
 
-    fn add_broadcaster(&mut self, _broad: broadcast::Sender<A::Output>) {
-        todo!()
+    pub(crate) fn add_broadcaster(&mut self, broad: broadcast::Sender<A::Output>) {
+        self.scheduler.outbound = Some(OutboundQueue::new(broad));
     }
 
-    fn launch(self) {
+    pub(crate) fn add_stream<S, M>(&mut self, stream: S)
+    where
+        S: 'static + Send + Unpin + FusedStream<Item = M>,
+        M: Into<A::Message>,
+    {
+        self.scheduler.add_stream(stream);
+    }
+
+    pub(crate) fn launch(self) {
         spawn_task(self.run())
     }
 
@@ -129,6 +106,7 @@ impl<A: ActorState> Scheduler<A> {
             queue,
             tasks,
             count: 0,
+            outbound: None,
         }
     }
 
@@ -138,7 +116,7 @@ impl<A: ActorState> Scheduler<A> {
     }
 
     /// Yields the next message to be processed by the actor state.
-    async fn next(&self) -> A::Message {
+    async fn next(&mut self) -> A::Message {
         loop {
             tokio::select! {
                 msg = self.recv.next() => {
@@ -151,7 +129,7 @@ impl<A: ActorState> Scheduler<A> {
                 },
                 msg = self.queue.next(), if !self.queue.is_empty() => {
                     self.count -= 1;
-                    return msg;
+                    return msg.unwrap();
                 },
                 _ = self.tasks.next(), if !self.tasks.is_empty() => {},
             }
@@ -167,7 +145,7 @@ impl<A: ActorState> Scheduler<A> {
     /// be processed. For this reason, the futures queued this way must be `'static`.
     pub fn add_task<F, I>(&mut self, fut: F)
     where
-        F: Future<Output = I>,
+        F: 'static + Send + Future<Output = I>,
         I: 'static + Into<A::Message>,
     {
         self.count += 1;
@@ -183,7 +161,7 @@ impl<A: ActorState> Scheduler<A> {
     /// and the queued stream. For this reason, the managed futures must be `'static`.
     pub fn manage_future<F>(&mut self, fut: F)
     where
-        F: Future<Output = ()>,
+        F: 'static + Send + Future<Output = ()>,
     {
         self.tasks.push(Box::pin(fut));
     }
@@ -195,46 +173,49 @@ impl<A: ActorState> Scheduler<A> {
     /// [`add_endless_stream`].
     pub fn add_stream<S, I>(&mut self, stream: S)
     where
-        S: FusedStream<Item = I>,
+        S: 'static + Send + Unpin + FusedStream<Item = I>,
         I: Into<A::Message>,
     {
         self.recv
-            .push(ActorStream::Secondary(Box::new(stream.map(|m| m.into()))));
-    }
-
-    /// This method is vary similar to [`add_stream`] with the key difference that the given stream
-    /// does not need to implement [`FusedStream`]. To prevent the actor from potentially running
-    /// forever, messages yielded from these streams will be unwrapped, crashing the actor.
-    pub fn add_endless_stream<S, I>(&mut self, stream: S)
-    where
-        S: FusedStream<Item = I>,
-        I: Into<A::Message>,
-    {
-        todo!()
+            .push(ActorStream::Secondary(Box::new(stream.map(|m| m.into()))).fuse());
     }
 
     pub fn schedule<M>(&mut self, deadline: Instant, msg: M)
     where
         M: 'static + Into<A::Message>,
     {
-        //self.queue.push(Box::pin(Timer::new(deadline, msg.into())));
-        todo!()
+        self.queue.push(Box::pin(Timer::new(deadline, msg.into())));
+    }
+
+    /// Broadcasts a message to all listening clients. If the message fails to send, the msg will
+    /// be dropped.
+    ///
+    /// Note: This method does nothing if the actor is a [`SinkActor`]. [`StreamActor`]s and
+    /// [`JointActor`] will be able to broadcast.
+    // TODO: Return back the message or in some way handle failures for the user.
+    pub fn broadcast<M>(&mut self, msg: M)
+    where
+        M: Into<A::Output>,
+    {
+        if let Some(out) = self.outbound.as_mut() {
+            out.send(msg.into())
+        }
     }
 }
 
-impl<A: ActorState> From<UnboundedReceiver<A::Message>> for ActorStream<A> {
-    fn from(value: UnboundedReceiver<A::Message>) -> Self {
+impl<M: 'static + Send> From<UnboundedReceiver<M>> for ActorStream<M> {
+    fn from(value: UnboundedReceiver<M>) -> Self {
         Self::Main(UnboundedReceiverStream::new(value))
     }
 }
 
-enum ActorStream<M> {
+pub(crate) enum ActorStream<M> {
     Main(UnboundedReceiverStream<M>),
-    Secondary(Box<dyn Unpin + Stream<Item = M>>),
+    Secondary(Box<dyn 'static + Send + Unpin + FusedStream<Item = M>>),
 }
 
-impl<A: ActorState> Stream for ActorStream<A> {
-    type Item = A::Message;
+impl<M: 'static + Send> Stream for ActorStream<M> {
+    type Item = M;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
