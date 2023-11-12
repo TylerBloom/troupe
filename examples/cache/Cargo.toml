@@ -1,0 +1,10 @@
+[package]
+name = "futures-example-imperative"
+edition = "2021"
+version = "0.1.0"
+publish = false
+
+[dependencies]
+troupe = { path = "../../" }
+derive_more = "0.99.17"
+tokio = { version = "1.33", features = ["full"] }

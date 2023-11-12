@@ -87,7 +87,7 @@ impl<A: ActorState> ActorRunner<A> {
         self.state.start_up(&mut self.scheduler).await;
         loop {
             if self.scheduler.is_dead() {
-                return;
+                panic!("Scheduler is dead!!!");
             }
             let msg = self.scheduler.next().await;
             self.state.process(&mut self.scheduler, msg).await;
@@ -176,6 +176,7 @@ impl<A: ActorState> Scheduler<A> {
         S: 'static + Send + Unpin + FusedStream<Item = I>,
         I: Into<A::Message>,
     {
+        self.count += 1;
         self.recv
             .push(ActorStream::Secondary(Box::new(stream.map(|m| m.into()))).fuse());
     }
@@ -184,6 +185,7 @@ impl<A: ActorState> Scheduler<A> {
     where
         M: 'static + Into<A::Message>,
     {
+        self.count += 1;
         self.queue.push(Box::pin(Timer::new(deadline, msg.into())));
     }
 
