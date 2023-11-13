@@ -5,7 +5,7 @@ pub mod sink;
 pub mod stream;
 
 pub use async_trait::async_trait;
-use joint::JointClient;
+use joint::{JointClient, JointActor};
 use scheduler::{Scheduler, ActorStream, ActorRunner};
 use sink::{SinkActor, SinkClient};
 use stream::{StreamActor, StreamClient};
@@ -156,7 +156,7 @@ where
 /* --------- Joint actors --------- */
 impl<A> ActorBuilder<A>
 where
-    A: ActorState<ActorType = StreamActor>,
+    A: ActorState<ActorType = JointActor>,
 {
     pub fn stream(&self) -> StreamClient<A::Output> {
         StreamClient::new(self.broadcast.as_ref().unwrap().1.resubscribe())

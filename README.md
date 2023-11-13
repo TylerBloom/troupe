@@ -28,8 +28,16 @@ The last major component of the `troupe` actor model is permanence. Some actors 
 
 Lastly, there is built-in "garbage collection" for troupe actors. The scheduler will mark an actor as "dead" and then close the actor process down if all of its held streams close and it is holding no futures that can yield future messages. This check occurs regardless of the user-defined permanence of the actor.
 
+# Backwards Compatability
+Troupe is currently experimental and subject to potential breaking changes (with due consideration). Breaking changes might occur to improve API ergonomics, tweak the actor model, or use new Rust language features. In particular, there are several language features that will be used improve this crate upon stabilization:
+ - [`async fn` in traits]
+ - [specialization]
+ - [associate-type defaults]
+
+The stabilization of the first two present garunteed breaking changes for this crate but will drastically improve usability and ergonomics. Specialization will enable the `ActorBuilder` to present identically-named methods for launching the actor while returning the appropiate client type. The stabilization of `async fn` in traits will allow for the loosening of constraints on `ActorState`s in WASM contexts, allowing them to just be `'static` instead of `'static + Send`.
+
 # Usage and Licensing
 This project is currently licensed under a LGPL license. The intent of this is for modifications to this library. For forks or other modifications to this library, those versions are copyleft. For any crate (application or library) that uses `troupe`, there is no copyleft clause.
 
 # Contributing
-Troupe is currently experimental and subject to potential breaking changes (with due consideration). If there is an aspect of the project that you wish to see changed, improved, or even removed, open a ticket or PR.
+If there is an aspect of the project that you wish to see changed, improved, or even removed, open a ticket or PR.

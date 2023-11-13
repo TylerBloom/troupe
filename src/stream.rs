@@ -72,7 +72,7 @@ impl<M: Clone> Stream for StreamClient<M> {
 impl<M: Clone> Stream for BroadcastStream<M> {
     type Item = M;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         pin!(self.project().0.recv()).poll(cx).map(Result::ok)
     }
 }

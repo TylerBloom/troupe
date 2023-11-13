@@ -120,6 +120,10 @@ impl<A: ActorState> Scheduler<A> {
         loop {
             tokio::select! {
                 msg = self.recv.next() => {
+                    // TODO: This causes an issue where, if `recv` is out of valid streams, the
+                    // count goes to zero. This is a problem because it ignores the `queue`. To
+                    // manage this, we should split the stream count from the main count and add a
+                    // condition to this branch that checks that count.
                     match msg {
                         Some(msg) => return msg,
                         None => {
