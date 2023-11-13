@@ -1,12 +1,74 @@
-pub mod compat;
+//! Troupe provides a high-level toolset for modelling crates with actors. Troupe actors are built
+//! on top of async process, like those created from `tokio::spawn`, and help you model and control
+//! the flow of information in and out of them. The main goals of `troupe` are to provide:
+//! - An easy to conceptualize data flow
+//! - Simple access to concurrent processing of futures within actors
+//! - A model that can be adopted into an existing project all at once or over time
+//! - An ergonomic API devoid of magic
+//!
+//! At the core of every actor is an [`ActorState`]. These are the building blocks of modeling your
+//! application with `troupe`. This state fully isolated from the rest of your application and can
+//! only be reached by attaching a stream of inbound messages. For most actors, this stream is
+//! provided by `troupe` in the form of an MSPC-style tokio channel. Regardless of the stream, all
+//! inbound messages pass through the [`Scheduler`], which the state has access to while processing
+//! messages. The state can add new streams of messages, queue futures that yield message, or hand
+//! off futures that yield nothing to the scheduler.
+//!
+//! Communication from/to an actor is generally managed by a client. Each actor can define what its
+//! clients should function via the [`ActorState`]'s `ActorType`. Conceptually, every actor is
+//! either a `Stream` or `Sink` (or both). An actor that largely receive messages from other parts
+//! of our application is a [`SinkActor`], which use [`SinkClient`]s. An actor that recieves
+//! messages from a different type of stream (for example a Websocket) and then broadcast these
+//! messages is a [`StreamActor`], which use [`StreamClient`]s. If an actor does both of these, it
+//! is a [`JointActor`] and uses [`JointClient`]s.
+//!
+//! Troupe also supports WASM by using `wasm-bindgen-futures` to run actors.
+
+// TODO:
+//  - Address compat module
+//  - Add permanance to ActorState
+//  - Tackle other TODOs
+//  - Add docs to everything
+//  - Turn on deny directives
+//  - Review docs pages
+
+/*
+#![warn(rust_2018_idioms)]
+#![deny(
+    // missing_docs,
+    // missing_debug_implementations,
+    rustdoc::broken_intra_doc_links,
+    unreachable_pub,
+    unreachable_patterns,
+    unused,
+    unused_results,
+    unused_qualifications,
+    while_true,
+    trivial_casts,
+    trivial_bounds,
+    trivial_numeric_casts,
+    unconditional_panic,
+    clippy::all
+)]
+*/
+
+/// The compatability layer between async runtime and native vs WASM targets.
+pub(crate) mod compat;
+/// Actors that both can be sent messages and broadcast messages.
 pub mod joint;
-pub mod scheduler;
+/// Re-exports of commonly used items.
+pub mod prelude;
+mod scheduler;
+/// Actors that are only sent messages (either fire-and-forget messages or request-response
+/// messages).
 pub mod sink;
+/// Actors that broadcast messages.
 pub mod stream;
 
 pub use async_trait::async_trait;
-use joint::{JointClient, JointActor};
-use scheduler::{Scheduler, ActorStream, ActorRunner};
+use joint::{JointActor, JointClient};
+pub use scheduler::Scheduler;
+use scheduler::{ActorRunner, ActorStream};
 use sink::{SinkActor, SinkClient};
 use stream::{StreamActor, StreamClient};
 pub use tokio::sync::oneshot::{
@@ -18,7 +80,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{Future, FutureExt, StreamExt, stream::FusedStream};
+use futures::{stream::FusedStream, Future, StreamExt};
 use instant::Instant;
 use pin_project::pin_project;
 use tokio::sync::{
@@ -116,8 +178,7 @@ where
             send, recv, state, ..
         } = self;
         let mut runner = ActorRunner::new(state);
-        recv.into_iter()
-            .for_each(|r| runner.add_stream(r.fuse()));
+        recv.into_iter().for_each(|r| runner.add_stream(r.fuse()));
         runner.launch();
         SinkClient::new(send)
     }
@@ -146,8 +207,7 @@ where
         recv.push(ActorStream::Secondary(Box::new(stream)));
         let mut runner = ActorRunner::new(state);
         runner.add_broadcaster(broad);
-        recv.into_iter()
-            .for_each(|r| runner.add_stream(r.fuse()));
+        recv.into_iter().for_each(|r| runner.add_stream(r.fuse()));
         runner.launch();
         StreamClient::new(sub)
     }
@@ -183,8 +243,7 @@ where
         } = self;
         let (broad, sub) = broadcast.unwrap_or_else(|| broadcast::channel(100));
         let mut runner = ActorRunner::new(state);
-        recv.into_iter()
-            .for_each(|r| runner.add_stream(r.fuse()));
+        recv.into_iter().for_each(|r| runner.add_stream(r.fuse()));
         runner.add_broadcaster(broad);
         runner.launch();
         let sink = SinkClient::new(send);
@@ -214,9 +273,11 @@ impl<T> Timer<T> {
 impl<T> Future for Timer<T> {
     type Output = T;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.deadline
-            .poll_unpin(cx)
-            .map(|_| self.msg.take().unwrap())
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        match this.deadline.poll(cx) {
+            Poll::Ready(()) => Poll::Ready(this.msg.take().unwrap()),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }

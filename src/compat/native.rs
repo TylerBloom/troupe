@@ -1,238 +1,127 @@
-use std::{
-    ops::{Deref, DerefMut},
-    pin::Pin,
-    task::{Context, Poll},
-    time::Duration,
-};
-
-use futures::{Future, Stream};
-use instant::Instant;
-use pin_project::pin_project;
-
-use super::{SendableFuture, Sleep};
-
 /* ------ Send workarounds ------ */
 
+/// This trait abstracts over the requirements for spawning a task. In native async runtimes, a
+/// task might be ran in a different thread, so the future must be `'static + Send`. In WASM, you
+/// are always running in a single thread, so spawning a task only requires that the future that
+/// the future is `'static`. This concept is used throughout `troupe` to make writing actors in
+/// WASM as easy as possible.
 pub trait Sendable: 'static + Send {}
 
 impl<T> Sendable for T where T: 'static + Send {}
 
-#[pin_project]
-pub struct SendableWrapper<T>(#[pin] T);
-
-impl<T> SendableWrapper<T> {
-    pub fn new(inner: T) -> Self {
-        Self(inner)
-    }
-
-    pub fn take(self) -> T {
-        let Self(inner) = self;
-        inner
-    }
-}
-
-impl<T: Send> Deref for SendableWrapper<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T: Send> DerefMut for SendableWrapper<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<T: Future> Future for SendableWrapper<T> {
-    type Output = T::Output;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.project().0.poll(cx)
-    }
-}
-
-impl<T: Stream> Stream for SendableWrapper<T> {
-    type Item = T::Item;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project().0.poll_next(cx)
-    }
-}
-
-impl<T: Clone> Clone for SendableWrapper<T> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
 /* ------ General Utils ------ */
 
-/// Spawns a future that will execute. The future must return nothing for compatability with the
-/// WASM version.
-pub fn spawn_task<F, T>(fut: F)
-where
-    F: SendableFuture<Output = T>,
-    T: Sendable,
-{
-    drop(tokio::spawn(fut));
-}
+#[cfg(all(feature = "tokio", feature = "async-std"))]
+compile_error!("You can not enable both the 'tokio' and 'async-std' features. This leads to namespace collisions");
 
-/// Creates a future that will perform a non-blocking sleep
-pub fn sleep(dur: Duration) -> Sleep {
-    Sleep(Box::pin(tokio::time::sleep(dur)))
-}
+#[cfg(feature = "tokio")]
+pub use tokio::*;
 
-/// Creates a future that will perform a non-blocking sleep
-pub fn sleep_until(deadline: Instant) -> Sleep {
-    Sleep(Box::pin(tokio::time::sleep_until(deadline.into())))
-}
+#[cfg(feature = "async-std")]
+pub use async_std::*;
 
-pub fn log(msg: &str) {
-    println!("{msg}");
-}
 
-/* ------ Session ------ */
-#[cfg(feature = "client")]
-pub use client::*;
-
-#[cfg(feature = "client")]
-mod client {
+#[cfg(feature = "tokio")]
+mod tokio {
+    use crate::compat::SendableFuture;
     use std::{
+        future::Future,
         pin::Pin,
         task::{Context, Poll},
     };
+    use instant::{Instant, Duration};
+    use pin_project::pin_project;
 
-    use cookie::Cookie;
-    use futures::{Sink, Stream};
-    use reqwest::Response;
-    use tokio::net::TcpStream;
-    use tokio_tungstenite::{
-        tungstenite::{Error as TungsError, Message as TungsMessage},
-        MaybeTlsStream, WebSocketStream,
+    use super::Sendable;
+
+    /// A wrapper around `tokio::spawn`, which spawns a future that will execute in the background.
+    pub fn spawn_task<F, T>(fut: F)
+    where
+        F: SendableFuture<Output = T>,
+        T: Sendable,
+    {
+        drop(tokio::spawn(fut));
+    }
+
+    /// A future that will sleep for a period of time before waking up.
+    #[pin_project]
+    pub struct Sleep(#[pin] tokio::time::Sleep);
+
+    impl Future for Sleep {
+        type Output = ();
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            self.project().0.poll(cx)
+        }
+    }
+
+    /// Creates an instance of [`Sleep`] that will sleep for at least as long as the given duration.
+    pub fn sleep_for(dur: Duration) -> Sleep {
+        Sleep(tokio::time::sleep(dur))
+    }
+
+    /// Creates an instance of [`Sleep`] that will sleep at least until the given point in time.
+    pub fn sleep_until(deadline: Instant) -> Sleep {
+        Sleep(tokio::time::sleep_until(deadline.into()))
+    }
+}
+
+#[cfg(feature = "async-std")]
+mod async_std {
+    use crate::compat::SendableFuture;
+    use std::{
+        future::Future,
+        pin::Pin,
+        task::{Context, Poll},
     };
+    use futures::FutureExt;
+    use instant::{Instant, Duration};
 
-    use crate::{
-        client::error::{ClientError, ClientResult},
-        compat::{WebsocketError, WebsocketMessage, WebsocketResult},
-        COOKIE_NAME,
-    };
+    use super::Sendable;
 
-    /// A structure that the client uses to track its current session with the backend. A session
-    /// represents both an active session and a yet-to-be-session.
-    #[cfg(feature = "client")]
-    #[derive(Debug, Default, Clone)]
-    pub struct Session {
-        cookie: Option<Cookie<'static>>,
+    /// Spawns a future that will execute. The future must return nothing for compatability with the
+    /// WASM version.
+    pub fn spawn_task<F, T>(fut: F)
+    where
+        F: SendableFuture<Output = T>,
+        T: Sendable,
+    {
+        drop(async_std::task::spawn(fut));
     }
 
-    #[cfg(feature = "client")]
-    impl Session {
-        /// From a auth response from the backend, create and load the session as needed
-        pub fn load_from_resp(&mut self, resp: &Response) -> ClientResult<()> {
-            let session = resp
-                .cookies()
-                .find(|c| c.name() == COOKIE_NAME)
-                .ok_or(ClientError::LogInFailed)?;
-            let cookie = Cookie::build(COOKIE_NAME, session.value().to_string()).finish();
-            self.cookie = Some(cookie);
-            Ok(())
-        }
+    /// A future that will sleep for a period of time before waking up.
+    pub struct Sleep(Pin<Box<dyn 'static + Send + Future<Output = ()>>>);
 
-        /// Create the session as a string in order to send a request
-        pub fn cred_string(&self) -> ClientResult<String> {
-            self.cookie
-                .as_ref()
-                .map(ToString::to_string)
-                .ok_or(ClientError::NotLoggedIn)
+    impl Future for Sleep {
+        type Output = ();
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            self.0.poll_unpin(cx)
         }
     }
 
-    /* ------ Websockets ------ */
-
-    #[derive(Debug)]
-    pub struct Websocket(WebSocketStream<MaybeTlsStream<TcpStream>>);
-
-    impl Websocket {
-        /// Takes a URL string and attempts to connect to the backend at that URL. Because of
-        /// compatability reason between the native and WASM Websockets, the request that is sent needs
-        /// to be a simple get request.
-        pub async fn new(url: &str) -> Result<Self, ()> {
-            tokio_tungstenite::connect_async(url)
-                .await
-                .map(|(ws, _)| Websocket(ws))
-                .map_err(|err| panic!("{err}"))
-        }
+    /// Creates an instance of [`Sleep`] that will sleep for at least as long as the given duration.
+    pub fn sleep_for(dur: Duration) -> Sleep {
+        Sleep(Box::pin(async_std::task::sleep(dur)))
     }
 
-    impl Stream for Websocket {
-        type Item = WebsocketResult;
-
-        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            Pin::new(&mut self.0)
-                .poll_next(cx)
-                .map_ok(Into::into)
-                .map_err(Into::into)
-        }
+    /// Creates an instance of [`Sleep`] that will sleep at least until the given point in time.
+    pub fn sleep_until(deadline: Instant) -> Sleep {
+        sleep_for(deadline - Instant::now())
     }
+}
 
-    impl Sink<WebsocketMessage> for Websocket {
-        type Error = WebsocketError;
+#[cfg(test)]
+mod tests {
+    use instant::Duration;
 
-        fn poll_ready(
-            mut self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Pin::new(&mut self.0).poll_ready(cx).map_err(Into::into)
-        }
+    use super::sleep_for;
 
-        fn start_send(mut self: Pin<&mut Self>, item: WebsocketMessage) -> Result<(), Self::Error> {
-            Pin::new(&mut self.0)
-                .start_send(item.into())
-                .map_err(Into::into)
-        }
+    /* --- Impl trait tests --- */
+    fn is_send<T: Send>(_val: T) {}
 
-        fn poll_flush(
-            mut self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Pin::new(&mut self.0).poll_flush(cx).map_err(Into::into)
-        }
-
-        fn poll_close(
-            mut self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Pin::new(&mut self.0).poll_close(cx).map_err(Into::into)
-        }
-    }
-
-    impl From<TungsError> for WebsocketError {
-        fn from(_value: TungsError) -> Self {
-            Self
-        }
-    }
-
-    impl From<WebsocketMessage> for TungsMessage {
-        fn from(value: WebsocketMessage) -> Self {
-            match value {
-                WebsocketMessage::Text(data) => Self::Text(data),
-                WebsocketMessage::Bytes(data) => Self::Binary(data),
-            }
-        }
-    }
-
-    impl From<TungsMessage> for WebsocketMessage {
-        fn from(value: TungsMessage) -> Self {
-            match value {
-                TungsMessage::Text(data) => Self::Text(data),
-                TungsMessage::Binary(data) => Self::Bytes(data),
-                TungsMessage::Ping(_)
-                | TungsMessage::Pong(_)
-                | TungsMessage::Close(_)
-                | TungsMessage::Frame(_) => unreachable!("server sent invalid message"),
-            }
-        }
+    fn sleep_is_send() {
+        let timer = sleep_for(Duration::from_secs(1));
+        is_send(timer);
     }
 }

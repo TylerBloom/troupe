@@ -1,7 +1,7 @@
 use std::{collections::HashMap, hash::Hash};
 
 use derive_more::From;
-use troupe::{async_trait, scheduler::Scheduler, sink::SinkActor, ActorState, OneshotSender};
+use troupe::prelude::*;
 
 /// The wrapper for the hashmap that will be our actor.
 #[derive(Default)]
