@@ -12,9 +12,9 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::{compat::spawn_task, ActorState, Timer};
+use crate::{compat::{spawn_task, SendableFuture, SendableFusedStream, Sendable, SendableStream}, ActorState, Timer};
 
-type FuturesCollection<T> = FuturesUnordered<Pin<Box<dyn 'static + Send + Future<Output = T>>>>;
+type FuturesCollection<T> = FuturesUnordered<Pin<Box<dyn SendableFuture<Output = T>>>>;
 
 /// The primary bookkeeper for the actor. The state can queue and manage additional futures and
 /// streams with it. The scheduler also tracks if it is possible that another message will be
@@ -43,7 +43,7 @@ struct OutboundQueue<M> {
     send: broadcast::Sender<M>,
 }
 
-impl<M: 'static + Send + Clone> OutboundQueue<M> {
+impl<M: Sendable + Clone> OutboundQueue<M> {
     fn new(send: broadcast::Sender<M>) -> Self {
         Self { send }
     }
@@ -73,7 +73,7 @@ impl<A: ActorState> ActorRunner<A> {
 
     pub(crate) fn add_stream<S, M>(&mut self, stream: S)
     where
-        S: 'static + Send + Unpin + FusedStream<Item = M>,
+        S: SendableFusedStream<Item = M>,
         M: Into<A::Message>,
     {
         self.scheduler.add_stream(stream);
@@ -149,7 +149,7 @@ impl<A: ActorState> Scheduler<A> {
     /// be processed. For this reason, the futures queued this way must be `'static`.
     pub fn add_task<F, I>(&mut self, fut: F)
     where
-        F: 'static + Send + Future<Output = I>,
+        F: Sendable + Future<Output = I>,
         I: 'static + Into<A::Message>,
     {
         self.count += 1;
@@ -165,7 +165,7 @@ impl<A: ActorState> Scheduler<A> {
     /// and the queued stream. For this reason, the managed futures must be `'static`.
     pub fn manage_future<F>(&mut self, fut: F)
     where
-        F: 'static + Send + Future<Output = ()>,
+        F: Sendable + Future<Output = ()>,
     {
         self.tasks.push(Box::pin(fut));
     }
@@ -177,7 +177,7 @@ impl<A: ActorState> Scheduler<A> {
     /// [`add_endless_stream`].
     pub fn add_stream<S, I>(&mut self, stream: S)
     where
-        S: 'static + Send + Unpin + FusedStream<Item = I>,
+        S: SendableStream<Item = I> + FusedStream,
         I: Into<A::Message>,
     {
         self.count += 1;
@@ -209,7 +209,7 @@ impl<A: ActorState> Scheduler<A> {
     }
 }
 
-impl<M: 'static + Send> From<UnboundedReceiver<M>> for ActorStream<M> {
+impl<M: Sendable> From<UnboundedReceiver<M>> for ActorStream<M> {
     fn from(value: UnboundedReceiver<M>) -> Self {
         Self::Main(UnboundedReceiverStream::new(value))
     }
@@ -217,10 +217,10 @@ impl<M: 'static + Send> From<UnboundedReceiver<M>> for ActorStream<M> {
 
 pub(crate) enum ActorStream<M> {
     Main(UnboundedReceiverStream<M>),
-    Secondary(Box<dyn 'static + Send + Unpin + FusedStream<Item = M>>),
+    Secondary(Box<dyn SendableFusedStream<Item = M>>),
 }
 
-impl<M: 'static + Send> Stream for ActorStream<M> {
+impl<M: Sendable> Stream for ActorStream<M> {
     type Item = M;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

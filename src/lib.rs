@@ -53,7 +53,7 @@
 */
 
 /// The compatability layer between async runtime and native vs WASM targets.
-pub(crate) mod compat;
+pub mod compat;
 /// Actors that both can be sent messages and broadcast messages.
 pub mod joint;
 /// Re-exports of commonly used items.
@@ -66,6 +66,7 @@ pub mod sink;
 pub mod stream;
 
 pub use async_trait::async_trait;
+use compat::{Sendable, SendableStream};
 use joint::{JointActor, JointClient};
 pub use scheduler::Scheduler;
 use scheduler::{ActorRunner, ActorStream};
@@ -109,12 +110,12 @@ pub trait ActorState: 'static + Send + Sized {
 
     /// Inbound messages to the actor must be this type. Clients will send the actor messages of
     /// this type and any queued futures or streams must yield this type.
-    type Message: 'static + Send;
+    type Message: Sendable;
 
     /// For [`SinkActor`]s and [`JointActor`]s, this is the message type which is broadcasts.
     /// For [`StreamActor`]s, this can be `()` (unfortunately, default associated types are
     /// unstable).
-    type Output: 'static + Send + Clone;
+    type Output: Sendable + Clone;
 
     /// Before starting the main loop of running the actor, this method is called to finalize any
     /// setup of the actor state. No inbound messages will be processed until this method is
@@ -156,7 +157,7 @@ where
 
     pub fn add_stream<S, I>(&mut self, stream: S)
     where
-        S: 'static + Send + Unpin + FusedStream<Item = I>,
+        S: SendableStream<Item = I> + FusedStream,
         I: Into<A::Message>,
     {
         self.recv

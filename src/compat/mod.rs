@@ -3,7 +3,7 @@
 
 use std::fmt::Debug;
 
-use futures::{Future, Stream};
+use futures::{Future, Stream, stream::FusedStream};
 
 #[cfg(not(target_family = "wasm"))]
 mod native;
@@ -22,6 +22,10 @@ impl<T> SendableFuture for T where T: Sendable + Future {}
 pub trait SendableStream: Sendable + Unpin + Stream {}
 
 impl<T> SendableStream for T where T: Sendable + Unpin + Stream {}
+
+pub trait SendableFusedStream: Sendable + Unpin + FusedStream {}
+
+impl<T> SendableFusedStream for T where T: SendableStream + FusedStream {}
 
 impl Debug for Sleep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
