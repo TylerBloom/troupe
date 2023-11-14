@@ -12,7 +12,10 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::{compat::{spawn_task, SendableFuture, SendableFusedStream, Sendable, SendableStream}, ActorState, Timer};
+use crate::{
+    compat::{spawn_task, Sendable, SendableFusedStream, SendableFuture, SendableStream},
+    ActorState, Timer,
+};
 
 type FuturesCollection<T> = FuturesUnordered<Pin<Box<dyn SendableFuture<Output = T>>>>;
 
@@ -22,9 +25,6 @@ type FuturesCollection<T> = FuturesUnordered<Pin<Box<dyn SendableFuture<Output =
 /// and there are no queued futures, it will close the actor; otherwise, the deadlocked actor will
 /// stay in memory during nothing.
 pub struct Scheduler<A: ActorState> {
-    /// The number of sources that could yield a message for the actor to process. Once it hits
-    /// zero, the actor is dead as it can no longer process any messages.
-    count: usize,
     /// The inbound streams to the actor.
     recv: SelectAll<Fuse<ActorStream<A::Message>>>,
     /// Futures that the actor has queued that will yield a message.
@@ -33,10 +33,14 @@ pub struct Scheduler<A: ActorState> {
     tasks: FuturesCollection<()>,
     /// The manager for outbound messages that will be broadcast from the actor.
     outbound: Option<OutboundQueue<A::Output>>,
-    // TODO:
-    //  - Add a queue for timers so that they are not lumped in the `queue`.
-    //    - Make those timers cancelable by assoicating each on with an id (usize)
-    //  - Make all messages and streams abortable with `futures::stream::Abortable`
+    /// The number of stream that could yield a message for the actor to process. Once this and the
+    /// `future_count` hit both reach zero, the actor is dead as it can no longer process any
+    /// messages.
+    stream_count: usize,
+    /// The number of futures that could yield a message for the actor to process. Once this and
+    /// the `stream_count` hit both reach zero, the actor is dead as it can no longer process any
+    /// messages.
+    future_count: usize,
 }
 
 struct OutboundQueue<M> {
@@ -49,7 +53,6 @@ impl<M: Sendable + Clone> OutboundQueue<M> {
     }
 
     fn send(&mut self, msg: M) {
-        // TODO: Properly handle errors
         let _ = self.send.send(msg);
     }
 }
@@ -105,37 +108,37 @@ impl<A: ActorState> Scheduler<A> {
             recv,
             queue,
             tasks,
-            count: 0,
             outbound: None,
+            stream_count: 0,
+            future_count: 0,
         }
     }
 
     /// Returns if the actor is dead and should be dropped.
     fn is_dead(&self) -> bool {
-        self.count == 0
+        self.stream_count + self.future_count == 0
     }
 
     /// Yields the next message to be processed by the actor state.
     async fn next(&mut self) -> A::Message {
         loop {
             tokio::select! {
-                msg = self.recv.next() => {
-                    // TODO: This causes an issue where, if `recv` is out of valid streams, the
-                    // count goes to zero. This is a problem because it ignores the `queue`. To
-                    // manage this, we should split the stream count from the main count and add a
-                    // condition to this branch that checks that count.
+                msg = self.recv.next(), if self.stream_count != 0 => {
                     match msg {
                         Some(msg) => return msg,
                         None => {
-                            self.count -= 1;
+                            self.stream_count -= 1;
                         }
                     }
                 },
-                msg = self.queue.next(), if !self.queue.is_empty() => {
-                    self.count -= 1;
+                msg = self.queue.next(), if self.future_count != 0 => {
+                    self.future_count -= 1;
                     return msg.unwrap();
                 },
                 _ = self.tasks.next(), if !self.tasks.is_empty() => {},
+                else => {
+                    panic!("Scheduler is dead!!!");
+                }
             }
         }
     }
@@ -152,7 +155,7 @@ impl<A: ActorState> Scheduler<A> {
         F: Sendable + Future<Output = I>,
         I: 'static + Into<A::Message>,
     {
-        self.count += 1;
+        self.future_count += 1;
         self.queue.push(Box::pin(fut.map(Into::into)));
     }
 
@@ -180,7 +183,7 @@ impl<A: ActorState> Scheduler<A> {
         S: SendableStream<Item = I> + FusedStream,
         I: Into<A::Message>,
     {
-        self.count += 1;
+        self.stream_count += 1;
         self.recv
             .push(ActorStream::Secondary(Box::new(stream.map(|m| m.into()))).fuse());
     }
@@ -189,7 +192,7 @@ impl<A: ActorState> Scheduler<A> {
     where
         M: 'static + Into<A::Message>,
     {
-        self.count += 1;
+        self.future_count += 1;
         self.queue.push(Box::pin(Timer::new(deadline, msg.into())));
     }
 
@@ -198,7 +201,6 @@ impl<A: ActorState> Scheduler<A> {
     ///
     /// Note: This method does nothing if the actor is a [`SinkActor`]. [`StreamActor`]s and
     /// [`JointActor`] will be able to broadcast.
-    // TODO: Return back the message or in some way handle failures for the user.
     pub fn broadcast<M>(&mut self, msg: M)
     where
         M: Into<A::Output>,

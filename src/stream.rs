@@ -1,5 +1,4 @@
 use std::{
-    future::Future,
     pin::{pin, Pin},
     task::{Context, Poll},
 };
@@ -26,16 +25,22 @@ pub struct StreamClient<M> {
     recv: BroadcastStream<M>,
 }
 
-// TODO: This implementation is incorrect. Because of implementation details, the broadcast stream
-// in tokio_streams will not implement `AsRef`. So, this stream will need to either hold a second
-// copy of the channel or share a common one behind an `Arc`.
+/// Because of how broadcast streams are implemented in `tokio_streams`, we can not create a
+/// broadcast stream from another broadcast stream. Because of this, we must track a second, inner
+/// receiver.
 #[pin_project]
-struct BroadcastStream<M>(#[pin] broadcast::Receiver<M>);
+struct BroadcastStream<M> {
+    /// A copy of the original channel, used for cloning the client.
+    copy: broadcast::Receiver<M>,
+    /// The stream that is polled.
+    #[pin]
+    inner: tokio_stream::wrappers::BroadcastStream<M>,
+}
 
-impl<M> StreamClient<M> {
+impl<M: Send + Clone> StreamClient<M> {
     pub(crate) fn new(recv: broadcast::Receiver<M>) -> Self {
         Self {
-            recv: BroadcastStream(recv),
+            recv: BroadcastStream::new(recv),
         }
     }
 
@@ -45,23 +50,24 @@ impl<M> StreamClient<M> {
     {
         ActorBuilder::new(state)
     }
+}
 
-    pub fn try_recv(&mut self) -> Option<M>
-    where
-        M: Clone,
-    {
-        self.recv.0.try_recv().ok()
+impl<M: Send + Clone> BroadcastStream<M> {
+    fn new(stream: broadcast::Receiver<M>) -> Self {
+        let copy = stream.resubscribe();
+        let inner = tokio_stream::wrappers::BroadcastStream::new(stream);
+        Self { copy, inner }
     }
 }
 
-impl<M: Clone> Clone for StreamClient<M> {
+impl<M: Send + Clone> Clone for StreamClient<M> {
     fn clone(&self) -> Self {
-        let recv = BroadcastStream(self.recv.0.resubscribe());
+        let recv = BroadcastStream::new(self.recv.copy.resubscribe());
         Self { recv }
     }
 }
 
-impl<M: Clone> Stream for StreamClient<M> {
+impl<M: Send + Clone> Stream for StreamClient<M> {
     type Item = M;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -69,10 +75,15 @@ impl<M: Clone> Stream for StreamClient<M> {
     }
 }
 
-impl<M: Clone> Stream for BroadcastStream<M> {
+impl<M: Send + Clone> Stream for BroadcastStream<M> {
     type Item = M;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        pin!(self.project().0.recv()).poll(cx).map(Result::ok)
+        let this = self.project();
+        let digest = this.inner.poll_next(cx).map(|res| res.transpose().ok().flatten());
+        if digest.is_ready() {
+            drop(this.copy.try_recv());
+        }
+        digest
     }
 }

@@ -25,7 +25,6 @@
 //! Troupe also supports WASM by using `wasm-bindgen-futures` to run actors.
 
 // TODO:
-//  - Address compat module
 //  - Add permanance to ActorState
 //  - Tackle other TODOs
 //  - Add docs to everything
@@ -58,7 +57,7 @@ pub mod compat;
 pub mod joint;
 /// Re-exports of commonly used items.
 pub mod prelude;
-mod scheduler;
+pub(crate) mod scheduler;
 /// Actors that are only sent messages (either fire-and-forget messages or request-response
 /// messages).
 pub mod sink;

@@ -26,7 +26,7 @@ pub struct JointClient<I, O> {
     recv: StreamClient<O>,
 }
 
-impl<I, O> JointClient<I, O> {
+impl<I, O: Send + Clone> JointClient<I, O> {
     pub(crate) fn new(send: SinkClient<I>, recv: StreamClient<O>) -> Self {
         Self { send, recv }
     }
@@ -64,18 +64,11 @@ impl<I, O> JointClient<I, O> {
     {
         self.send.track(msg)
     }
-
-    pub fn try_recv(&mut self) -> Option<O>
-    where
-        O: Clone,
-    {
-        self.recv.try_recv()
-    }
 }
 
 impl<I, O> Clone for JointClient<I, O>
 where
-    O: Clone,
+    O: Send + Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -87,7 +80,7 @@ where
 
 impl<I, O> Stream for JointClient<I, O>
 where
-    O: Clone,
+    O: Send + Clone,
 {
     type Item = O;
 
