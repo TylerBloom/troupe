@@ -7,8 +7,6 @@ use futures::Stream;
 use pin_project::pin_project;
 use tokio::sync::broadcast;
 
-use crate::{ActorBuilder, ActorState};
-
 /// A marker type used by the [`ActorBuilder`] to know what kind of [`ActorState`] it is dealing
 /// with. A stream actor is one that receives messages from one or streams and then forwards
 /// messages to its clients.
@@ -20,6 +18,7 @@ use crate::{ActorBuilder, ActorState};
 #[derive(Debug)]
 pub struct StreamActor;
 
+/// A client that receives messages from an actor that broadcasts.
 #[pin_project]
 #[derive(Debug)]
 pub struct StreamClient<M> {
@@ -45,13 +44,6 @@ impl<M: 'static + Send + Clone> StreamClient<M> {
         Self {
             recv: BroadcastStream::new(recv),
         }
-    }
-
-    pub fn builder<A>(state: A) -> ActorBuilder<A>
-    where
-        A: ActorState<ActorType = StreamActor, Output = M>,
-    {
-        ActorBuilder::new(state)
     }
 }
 

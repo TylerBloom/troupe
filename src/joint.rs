@@ -9,7 +9,7 @@ use pin_project::pin_project;
 use crate::{
     sink::{self, SinkClient},
     stream::StreamClient,
-    ActorBuilder, ActorState, Permanent, Transient,
+    Permanent, Transient,
 };
 
 use crate::OneshotSender;
@@ -20,6 +20,8 @@ use crate::OneshotSender;
 #[derive(Debug)]
 pub struct JointActor;
 
+/// A client to an actor. This client is a combination of the ['SinkClient`] and the
+/// [`StreamClient`].
 #[pin_project]
 #[derive(Debug)]
 pub struct JointClient<T, I, O> {
@@ -29,26 +31,23 @@ pub struct JointClient<T, I, O> {
 }
 
 impl<T, I, O: 'static + Send + Clone> JointClient<T, I, O> {
+    /// A constuctor for the client.
     pub(crate) fn new(send: SinkClient<T, I>, recv: StreamClient<O>) -> Self {
         Self { send, recv }
     }
 
-    pub fn builder<A>(state: A) -> ActorBuilder<A>
-    where
-        A: ActorState<Message = I, ActorType = JointActor, Output = O>,
-    {
-        ActorBuilder::new(state)
-    }
-
+    /// Consumes the client and return the constituent sink and stream clients.
     pub fn split(self) -> (SinkClient<T, I>, StreamClient<O>) {
         let Self { send, recv } = self;
         (send, recv)
     }
 
+    /// Returns a clone of this client's sink client.
     pub fn sink(&self) -> SinkClient<T, I> {
         self.send.clone()
     }
 
+    /// Returns a clone of this client's stream client.
     pub fn stream(&self) -> StreamClient<O>
     where
         O: Clone,
@@ -61,12 +60,21 @@ impl<T, I, O: 'static + Send + Clone> JointClient<T, I, O> {
         self.send.is_closed()
     }
 
+    /// Sends a fire-and-forget style message to the actor and returns if the message was sent
+    /// successfully.
     pub fn send(&self, msg: impl Into<I>) -> bool {
         self.send.send(msg)
     }
 }
 
 impl<I, O> JointClient<Permanent, I, O> {
+    /// Sends a request-response style message to a [`Permanent`] actor. The given data is paired
+    /// with a one-time use channel and sent to the actor. A [`Tracker`] that will receive a
+    /// response from the actor is returned.
+    ///
+    /// Note: Since this client is one for a permanent actor, there is an implicit unwrap once the
+    /// tracker receives a message from the actor. If the actor drops the other half of the channel
+    /// or has died somehow (likely from a panic), the returned tracker will panic too.
     pub fn track<M, R>(&self, msg: M) -> sink::permanent::Tracker<R>
     where
         I: From<(M, OneshotSender<R>)>,
@@ -76,6 +84,9 @@ impl<I, O> JointClient<Permanent, I, O> {
 }
 
 impl<I, O> JointClient<Transient, I, O> {
+    /// Sends a request-response style message to a [`Transient`] actor.
+    /// The given data is paired with a one-time use channel and sent to the actor.
+    /// A [`Tracker`] that will receive a response from the actor is returned.
     pub fn track<M, R>(&self, msg: M) -> sink::transient::Tracker<R>
     where
         I: From<(M, OneshotSender<R>)>,

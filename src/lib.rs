@@ -25,13 +25,12 @@
 //! Troupe also supports WASM by using `wasm-bindgen-futures` to run actors.
 
 // TODO:
-//  - Turn on deny directives
 //  - Add docs to everything
 //  - Review docs pages
 
 #![warn(rust_2018_idioms)]
 #![deny(
-    // missing_docs,
+    missing_docs,
     // rustdoc::broken_intra_doc_links,
     missing_debug_implementations,
     unreachable_pub,
@@ -44,6 +43,7 @@
     trivial_bounds,
     trivial_numeric_casts,
     unconditional_panic,
+    unsafe_code,
     clippy::all
 )]
 
@@ -144,6 +144,9 @@ pub struct Permanent;
 #[derive(Debug)]
 pub struct Transient;
 
+/// Holds a type that implements [`ActorState`], helps aggregate all data needed by the actor, and
+/// then launches the actor process. When the actor process is launched, a client is returned to
+/// the caller. This client's type depends on the actor's type.
 #[allow(missing_debug_implementations)]
 pub struct ActorBuilder<A: ActorState> {
     send: UnboundedSender<A::Message>,
@@ -158,6 +161,7 @@ impl<A> ActorBuilder<A>
 where
     A: ActorState,
 {
+    /// Constructs a new builder for an actor that uses the given state.
     pub fn new(state: A) -> Self {
         let (send, recv) = unbounded_channel();
         let recv = vec![recv.into()];
@@ -169,6 +173,8 @@ where
         }
     }
 
+    /// Attaches a stream that will be used by the actor once its spawned. No messages will be
+    /// processed until after the actor is launched.
     pub fn add_stream<S, I>(&mut self, stream: S)
     where
         S: SendableStream<Item = I> + FusedStream,
@@ -184,10 +190,14 @@ impl<A> ActorBuilder<A>
 where
     A: ActorState<ActorType = SinkActor>,
 {
+    /// Returns a client for the actor that will be spawned. While the returned client will be able
+    /// to send messages, those messages will not be processed until after the actor is launched by
+    /// the builder.
     pub fn sink_client(&self) -> SinkClient<A::Permanence, A::Message> {
         SinkClient::new(self.send.clone())
     }
 
+    /// Launches an actor that uses the given state and returns a client to the actor.
     pub fn launch_sink(self) -> SinkClient<A::Permanence, A::Message> {
         let Self {
             send, recv, state, ..
@@ -204,10 +214,14 @@ impl<A> ActorBuilder<A>
 where
     A: ActorState<ActorType = StreamActor>,
 {
-    pub fn stream_client(&self) -> StreamClient<A::Output> {
-        StreamClient::new(self.broadcast.as_ref().unwrap().1.resubscribe())
+    /// Returns a client for the actor that will be spawned. The client will not yield any messages
+    /// until after the actor is launched and has sent a message.
+    pub fn stream_client(&mut self) -> StreamClient<A::Output> {
+        let (_, broad) = self.broadcast.get_or_insert_with(|| broadcast::channel(100));
+        StreamClient::new(broad.resubscribe())
     }
 
+    /// Launches an actor that uses the given state and stream and returns a client to the actor.
     pub fn launch_stream<S>(self, stream: S) -> StreamClient<A::Output>
     where
         S: 'static + Send + Unpin + FusedStream<Item = A::Message>,
@@ -233,14 +247,20 @@ impl<A> ActorBuilder<A>
 where
     A: ActorState<ActorType = JointActor>,
 {
+    /// Returns a client for the actor that will be spawned. The client will not yield any messages
+    /// until after the actor is launched and has sent a message.
     pub fn stream(&self) -> StreamClient<A::Output> {
         StreamClient::new(self.broadcast.as_ref().unwrap().1.resubscribe())
     }
 
+    /// Returns a sink client for the actor that will be spawned. While the returned client will be
+    /// able to send messages, those messages will not be processed until after the actor is
+    /// launched by the builder.
     pub fn sink(&self) -> SinkClient<A::Permanence, A::Message> {
         SinkClient::new(self.send.clone())
     }
 
+    /// Launches an actor that uses the given state and stream and returns a client to the actor.
     pub fn launch_with_stream<S>(mut self, stream: S) -> JointClient<A::Permanence, A::Message, A::Output>
     where
         S: 'static + Send + Unpin + FusedStream<Item = A::Message>,
@@ -249,6 +269,7 @@ where
         self.launch()
     }
 
+    /// Launches an actor that uses the given state and returns a client to the actor.
     pub fn launch(self) -> JointClient<A::Permanence, A::Message, A::Output> {
         let Self {
             send,
@@ -269,16 +290,18 @@ where
 
 /* -------- To move -------- */
 
+/// A message and sleep timer pair. Once the timer has elapsed and is polled, the message is taken
+/// from the inner option and returned. After that point, the timer should not be polled again.
 #[pin_project]
 #[allow(missing_debug_implementations)]
-pub struct Timer<T> {
+pub(crate) struct Timer<T> {
     #[pin]
     deadline: Sleep,
     msg: Option<T>,
 }
 
 impl<T> Timer<T> {
-    pub fn new(deadline: Instant, msg: T) -> Self {
+    pub(crate) fn new(deadline: Instant, msg: T) -> Self {
         Self {
             deadline: sleep_until(deadline),
             msg: Some(msg),

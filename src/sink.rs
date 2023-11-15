@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{oneshot_channel, ActorBuilder, ActorState, OneshotSender, Transient, Permanent};
+use crate::{oneshot_channel, OneshotSender, Transient, Permanent};
 
 /// A marker type used by the [`ActorBuilder`] to know what kind of [`ActorState`] it is dealing
 /// with. A sink actor is one that receives messages from other parts of the application. By adding
@@ -15,6 +15,11 @@ use crate::{oneshot_channel, ActorBuilder, ActorState, OneshotSender, Transient,
 #[derive(Debug)]
 pub struct SinkActor;
 
+/// A client to an actor. This client sends messages to the actor and supports two styles of
+/// messaging. The first is fire-and-forget messages. These messages are sent to the client
+/// immediately (no `.await` needed). The actor will process them eventually. The second kind is
+/// request-response or "trackable" messages. These messages are identical to the last kind except
+/// they contain a one-time use channel that the actor will use to send a message back.
 #[derive(Debug)]
 pub struct SinkClient<T, M> {
     ty: PhantomData<T>,
@@ -29,24 +34,26 @@ impl<T, M> SinkClient<T, M> {
         }
     }
 
-    pub fn builder<A>(state: A) -> ActorBuilder<A>
-    where
-        A: ActorState<Message = M, ActorType = SinkActor>,
-    {
-        ActorBuilder::new(state)
-    }
-
     /// Returns if the actor that the client is connected to is dead or not.
     pub fn is_closed(&self) -> bool {
         self.send.is_closed()
     }
 
+    /// Sends a fire-and-forget style message to the actor and returns if the message was sent
+    /// successfully.
     pub fn send(&self, msg: impl Into<M>) -> bool {
         self.send.send(msg.into()).is_ok()
     }
 }
 
 impl<M> SinkClient<Permanent, M> {
+    /// Sends a request-response style message to a [`Permanent`] actor. The given data is paired
+    /// with a one-time use channel and sent to the actor. A [`Tracker`] that will receive a
+    /// response from the actor is returned.
+    ///
+    /// Note: Since this client is one for a permanent actor, there is an implicit unwrap once the
+    /// tracker receives a message from the actor. If the actor drops the other half of the channel
+    /// or has died somehow (likely from a panic), the returned tracker will panic too.
     pub fn track<I, O>(&self, msg: I) -> permanent::Tracker<O>
     where
         M: From<(I, OneshotSender<O>)>,
@@ -59,6 +66,9 @@ impl<M> SinkClient<Permanent, M> {
 }
 
 impl<M> SinkClient<Transient, M> {
+    /// Sends a request-response style message to a [`Transient`] actor.
+    /// The given data is paired with a one-time use channel and sent to the actor.
+    /// A [`Tracker`] that will receive a response from the actor is returned.
     pub fn track<I, O>(&self, msg: I) -> transient::Tracker<O>
     where
         M: From<(I, OneshotSender<O>)>,
@@ -76,6 +86,7 @@ impl<T, M> Clone for SinkClient<T, M> {
     }
 }
 
+/// A module for things used to interact with the [`Permanent`] actors.
 pub mod permanent {
     use std::{
         future::Future,
@@ -85,13 +96,19 @@ pub mod permanent {
 
     use crate::OneshotReceiver;
 
+    /// A tracker for a request-response style message sent to a [`Permanent`] actor.
+    ///
+    /// Note: This tracker implicitly unwraps the message produced by its channel receiver. If the
+    /// actor drops the other half of the channel or has died somehow (likely from a panic), this
+    /// tracker will panic when polled.
     #[derive(Debug)]
     pub struct Tracker<T> {
         recv: OneshotReceiver<T>,
     }
 
     impl<T> Tracker<T> {
-        pub fn new(recv: OneshotReceiver<T>) -> Self {
+        /// A constructor for the tracker.
+        pub(crate) fn new(recv: OneshotReceiver<T>) -> Self {
             Self { recv }
         }
     }
@@ -105,6 +122,7 @@ pub mod permanent {
     }
 }
 
+/// A module for things used to interact with the [`Transient`] actors.
 pub mod transient {
     use std::{
         future::Future,
@@ -114,13 +132,19 @@ pub mod transient {
 
     use crate::OneshotReceiver;
 
+    /// A tracker for a request-response style message sent to a [`Trasient`] actor.
+    ///
+    /// Note: This tracker might be created after a failed attempt to send a message to a dead
+    /// actor. This means that the tracker will return `None` when polled; however, that does not
+    /// mean that the message was successfully received by the actor.
     #[derive(Debug)]
     pub struct Tracker<T> {
         recv: OneshotReceiver<T>,
     }
 
     impl<T> Tracker<T> {
-        pub fn new(recv: OneshotReceiver<T>) -> Self {
+        /// A constuctor for the tracker.
+        pub(crate) fn new(recv: OneshotReceiver<T>) -> Self {
             Self { recv }
         }
     }

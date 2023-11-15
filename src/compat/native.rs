@@ -120,6 +120,7 @@ mod tests {
     /* --- Impl trait tests --- */
     fn is_send<T: Send>(_val: T) {}
 
+    #[test]
     fn sleep_is_send() {
         let timer = sleep_for(Duration::from_secs(1));
         is_send(timer);

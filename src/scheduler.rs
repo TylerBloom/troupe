@@ -218,6 +218,7 @@ impl<A: ActorState> Scheduler<A> {
             .push(ActorStream::Secondary(Box::new(stream.map(|m| m.into()))).fuse());
     }
 
+    /// Schedules a message to be given to the actor to process at a given time.
     pub fn schedule<M>(&mut self, deadline: Instant, msg: M)
     where
         M: 'static + Into<A::Message>,
