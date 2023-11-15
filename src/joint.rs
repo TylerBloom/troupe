@@ -17,9 +17,11 @@ use crate::OneshotSender;
 /// A marker type used by the [`ActorBuilder`] to know what kind of [`ActorState`] it is dealing
 /// with. A joint actor is one that acts as both a [`SinkActor`] and a [`StreamActor`]. Its clients
 /// can both send messages into the actor and recieve messages forwarded by the actor.
+#[derive(Debug)]
 pub struct JointActor;
 
 #[pin_project]
+#[derive(Debug)]
 pub struct JointClient<T, I, O> {
     send: SinkClient<T, I>,
     #[pin]
@@ -52,6 +54,11 @@ impl<T, I, O: 'static + Send + Clone> JointClient<T, I, O> {
         O: Clone,
     {
         self.recv.clone()
+    }
+
+    /// Returns if the actor that the client is connected to is dead or not.
+    pub fn is_closed(&self) -> bool {
+        self.send.is_closed()
     }
 
     pub fn send(&self, msg: impl Into<I>) -> bool {

@@ -35,6 +35,7 @@ enum SchedulerStatus {
 ///
 /// Note: If the scheduler finds that the actor is dead but is also managing futures for it, the
 /// scheduler will spawn a new async task to poll those futures to completion.
+#[allow(missing_debug_implementations)]
 pub struct Scheduler<A: ActorState> {
     /// The inbound streams to the actor.
     recv: SelectAll<Fuse<ActorStream<A::Message>>>,

@@ -12,8 +12,10 @@ use crate::{oneshot_channel, ActorBuilder, ActorState, OneshotSender, Transient,
 /// The client of a [`SinkActor`] is the [`SinkClient`]. This client implements methods that allow
 /// for the sending of messages to this client. Communication between a sink client and
 /// sink actor can be roughly modelled with an MPSC-style channel (see [`mpsc::channel`]).
+#[derive(Debug)]
 pub struct SinkActor;
 
+#[derive(Debug)]
 pub struct SinkClient<T, M> {
     ty: PhantomData<T>,
     send: UnboundedSender<M>,
@@ -34,9 +36,12 @@ impl<T, M> SinkClient<T, M> {
         ActorBuilder::new(state)
     }
 
+    /// Returns if the actor that the client is connected to is dead or not.
+    pub fn is_closed(&self) -> bool {
+        self.send.is_closed()
+    }
+
     pub fn send(&self, msg: impl Into<M>) -> bool {
-        // This returns a result. It only errors when the connected actor panics. Should we "bubble
-        // up" that panic?
         self.send.send(msg.into()).is_ok()
     }
 }
@@ -48,7 +53,7 @@ impl<M> SinkClient<Permanent, M> {
     {
         let (send, recv) = oneshot_channel();
         let msg = M::from((msg, send));
-        self.send(msg);
+        let _ = self.send(msg);
         permanent::Tracker::new(recv)
     }
 }
@@ -60,7 +65,7 @@ impl<M> SinkClient<Transient, M> {
     {
         let (send, recv) = oneshot_channel();
         let msg = M::from((msg, send));
-        self.send(msg);
+        let _ = self.send(msg);
         transient::Tracker::new(recv)
     }
 }
@@ -80,6 +85,7 @@ pub mod permanent {
 
     use crate::OneshotReceiver;
 
+    #[derive(Debug)]
     pub struct Tracker<T> {
         recv: OneshotReceiver<T>,
     }
@@ -103,11 +109,12 @@ pub mod transient {
     use std::{
         future::Future,
         pin::Pin,
-        task::{Context, Poll},
+        task::{Context, Poll}, fmt::Debug,
     };
 
     use crate::OneshotReceiver;
 
+    #[derive(Debug)]
     pub struct Tracker<T> {
         recv: OneshotReceiver<T>,
     }

@@ -25,16 +25,15 @@
 //! Troupe also supports WASM by using `wasm-bindgen-futures` to run actors.
 
 // TODO:
-//  - Add docs to everything
 //  - Turn on deny directives
+//  - Add docs to everything
 //  - Review docs pages
 
-/*
 #![warn(rust_2018_idioms)]
 #![deny(
     // missing_docs,
-    // missing_debug_implementations,
-    rustdoc::broken_intra_doc_links,
+    // rustdoc::broken_intra_doc_links,
+    missing_debug_implementations,
     unreachable_pub,
     unreachable_patterns,
     unused,
@@ -47,7 +46,6 @@
     unconditional_panic,
     clippy::all
 )]
-*/
 
 /// The compatability layer between async runtime and native vs WASM targets.
 pub mod compat;
@@ -136,14 +134,17 @@ pub trait ActorState: 'static + Send + Sized {
 /// such, the [`Scheduler`] will not provide the actor state a method to shutdown. Also, the
 /// [`Tracker`]s for request-response style messages will implictly unwrap responses from their
 /// oneshot channels.
+#[derive(Debug)]
 pub struct Permanent;
 
 /// A marker type used in the [`ActorState`]. It communicates that the actor should exist for a
 /// non-infinite amount of time. The [`Scheduler`] will provide the actor state a method to
 /// shutdown. Also, the [`Tracker`]s for request-response style messages will not implictly unwrap
 /// responses from their oneshot channels.
+#[derive(Debug)]
 pub struct Transient;
 
+#[allow(missing_debug_implementations)]
 pub struct ActorBuilder<A: ActorState> {
     send: UnboundedSender<A::Message>,
     #[allow(clippy::type_complexity)]
@@ -269,6 +270,7 @@ where
 /* -------- To move -------- */
 
 #[pin_project]
+#[allow(missing_debug_implementations)]
 pub struct Timer<T> {
     #[pin]
     deadline: Sleep,

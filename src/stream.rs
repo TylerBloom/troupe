@@ -17,9 +17,11 @@ use crate::{ActorBuilder, ActorState};
 /// receiving methods that are "forwarded" by the actor. Unlike the [`SinkActor`], stream actors and
 /// clients don't directly support request/response style communication. Communication between a
 /// stream actor and client(s) can be modelled with a broadcast-style channel (see [`broadcast::channel`]).
+#[derive(Debug)]
 pub struct StreamActor;
 
 #[pin_project]
+#[derive(Debug)]
 pub struct StreamClient<M> {
     #[pin]
     recv: BroadcastStream<M>,
@@ -29,6 +31,7 @@ pub struct StreamClient<M> {
 /// broadcast stream from another broadcast stream. Because of this, we must track a second, inner
 /// receiver.
 #[pin_project]
+#[derive(Debug)]
 struct BroadcastStream<M> {
     /// A copy of the original channel, used for cloning the client.
     copy: broadcast::Receiver<M>,
