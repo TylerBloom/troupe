@@ -25,8 +25,6 @@
 //! Troupe also supports WASM by using `wasm-bindgen-futures` to run actors.
 
 // TODO:
-//  - Add permanance to ActorState
-//  - Tackle other TODOs
 //  - Add docs to everything
 //  - Turn on deny directives
 //  - Review docs pages
@@ -103,9 +101,13 @@ use crate::compat::{sleep_until, Sleep};
 /// type.
 #[async_trait]
 pub trait ActorState: 'static + Send + Sized {
-    /// This type should be either [`SinkActor`], [`StreamActor`], or [`JointActor`]. This type is
+    /// This type should either be [`SinkActor`], [`StreamActor`], or [`JointActor`]. This type is
     /// mostly a marker to inform the [`ActorBuilder`].
     type ActorType;
+
+    /// This type should either be [`Permanent`] or [`Transient`]. This type is mostly a marker
+    /// type to inform the actor's client(s).
+    type Permanence;
 
     /// Inbound messages to the actor must be this type. Clients will send the actor messages of
     /// this type and any queued futures or streams must yield this type.
@@ -129,6 +131,18 @@ pub trait ActorState: 'static + Send + Sized {
     /// in the [`Scheduler`].
     async fn process(&mut self, scheduler: &mut Scheduler<Self>, msg: Self::Message);
 }
+
+/// A marker type used in the [`ActorState`]. It communicates that the actor should never die. As
+/// such, the [`Scheduler`] will not provide the actor state a method to shutdown. Also, the
+/// [`Tracker`]s for request-response style messages will implictly unwrap responses from their
+/// oneshot channels.
+pub struct Permanent;
+
+/// A marker type used in the [`ActorState`]. It communicates that the actor should exist for a
+/// non-infinite amount of time. The [`Scheduler`] will provide the actor state a method to
+/// shutdown. Also, the [`Tracker`]s for request-response style messages will not implictly unwrap
+/// responses from their oneshot channels.
+pub struct Transient;
 
 pub struct ActorBuilder<A: ActorState> {
     send: UnboundedSender<A::Message>,
@@ -169,11 +183,11 @@ impl<A> ActorBuilder<A>
 where
     A: ActorState<ActorType = SinkActor>,
 {
-    pub fn sink_client(&self) -> SinkClient<A::Message> {
+    pub fn sink_client(&self) -> SinkClient<A::Permanence, A::Message> {
         SinkClient::new(self.send.clone())
     }
 
-    pub fn launch_sink(self) -> SinkClient<A::Message> {
+    pub fn launch_sink(self) -> SinkClient<A::Permanence, A::Message> {
         let Self {
             send, recv, state, ..
         } = self;
@@ -222,11 +236,11 @@ where
         StreamClient::new(self.broadcast.as_ref().unwrap().1.resubscribe())
     }
 
-    pub fn sink(&self) -> SinkClient<A::Message> {
+    pub fn sink(&self) -> SinkClient<A::Permanence, A::Message> {
         SinkClient::new(self.send.clone())
     }
 
-    pub fn launch_with_stream<S>(mut self, stream: S) -> JointClient<A::Message, A::Output>
+    pub fn launch_with_stream<S>(mut self, stream: S) -> JointClient<A::Permanence, A::Message, A::Output>
     where
         S: 'static + Send + Unpin + FusedStream<Item = A::Message>,
     {
@@ -234,7 +248,7 @@ where
         self.launch()
     }
 
-    pub fn launch(self) -> JointClient<A::Message, A::Output> {
+    pub fn launch(self) -> JointClient<A::Permanence, A::Message, A::Output> {
         let Self {
             send,
             recv,

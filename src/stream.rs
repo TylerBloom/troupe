@@ -37,7 +37,7 @@ struct BroadcastStream<M> {
     inner: tokio_stream::wrappers::BroadcastStream<M>,
 }
 
-impl<M: Send + Clone> StreamClient<M> {
+impl<M: 'static + Send + Clone> StreamClient<M> {
     pub(crate) fn new(recv: broadcast::Receiver<M>) -> Self {
         Self {
             recv: BroadcastStream::new(recv),
@@ -52,7 +52,7 @@ impl<M: Send + Clone> StreamClient<M> {
     }
 }
 
-impl<M: Send + Clone> BroadcastStream<M> {
+impl<M: 'static + Send + Clone> BroadcastStream<M> {
     fn new(stream: broadcast::Receiver<M>) -> Self {
         let copy = stream.resubscribe();
         let inner = tokio_stream::wrappers::BroadcastStream::new(stream);
@@ -60,14 +60,14 @@ impl<M: Send + Clone> BroadcastStream<M> {
     }
 }
 
-impl<M: Send + Clone> Clone for StreamClient<M> {
+impl<M: 'static + Send + Clone> Clone for StreamClient<M> {
     fn clone(&self) -> Self {
         let recv = BroadcastStream::new(self.recv.copy.resubscribe());
         Self { recv }
     }
 }
 
-impl<M: Send + Clone> Stream for StreamClient<M> {
+impl<M: 'static + Send + Clone> Stream for StreamClient<M> {
     type Item = M;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -75,7 +75,7 @@ impl<M: Send + Clone> Stream for StreamClient<M> {
     }
 }
 
-impl<M: Send + Clone> Stream for BroadcastStream<M> {
+impl<M: 'static + Send + Clone> Stream for BroadcastStream<M> {
     type Item = M;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

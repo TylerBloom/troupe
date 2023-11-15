@@ -7,9 +7,9 @@ use futures::Stream;
 use pin_project::pin_project;
 
 use crate::{
-    sink::{SinkClient, Tracker},
+    sink::{self, SinkClient},
     stream::StreamClient,
-    ActorBuilder, ActorState,
+    ActorBuilder, ActorState, Permanent, Transient,
 };
 
 use crate::OneshotSender;
@@ -20,14 +20,14 @@ use crate::OneshotSender;
 pub struct JointActor;
 
 #[pin_project]
-pub struct JointClient<I, O> {
-    send: SinkClient<I>,
+pub struct JointClient<T, I, O> {
+    send: SinkClient<T, I>,
     #[pin]
     recv: StreamClient<O>,
 }
 
-impl<I, O: Send + Clone> JointClient<I, O> {
-    pub(crate) fn new(send: SinkClient<I>, recv: StreamClient<O>) -> Self {
+impl<T, I, O: 'static + Send + Clone> JointClient<T, I, O> {
+    pub(crate) fn new(send: SinkClient<T, I>, recv: StreamClient<O>) -> Self {
         Self { send, recv }
     }
 
@@ -38,12 +38,12 @@ impl<I, O: Send + Clone> JointClient<I, O> {
         ActorBuilder::new(state)
     }
 
-    pub fn split(self) -> (SinkClient<I>, StreamClient<O>) {
+    pub fn split(self) -> (SinkClient<T, I>, StreamClient<O>) {
         let Self { send, recv } = self;
         (send, recv)
     }
 
-    pub fn sink(&self) -> SinkClient<I> {
+    pub fn sink(&self) -> SinkClient<T, I> {
         self.send.clone()
     }
 
@@ -54,21 +54,32 @@ impl<I, O: Send + Clone> JointClient<I, O> {
         self.recv.clone()
     }
 
-    pub fn send(&self, msg: impl Into<I>) {
+    pub fn send(&self, msg: impl Into<I>) -> bool {
         self.send.send(msg)
     }
+}
 
-    pub fn track<T, R>(&self, msg: T) -> Tracker<R>
+impl<I, O> JointClient<Permanent, I, O> {
+    pub fn track<M, R>(&self, msg: M) -> sink::permanent::Tracker<R>
     where
-        I: From<(T, OneshotSender<R>)>,
+        I: From<(M, OneshotSender<R>)>,
     {
         self.send.track(msg)
     }
 }
 
-impl<I, O> Clone for JointClient<I, O>
+impl<I, O> JointClient<Transient, I, O> {
+    pub fn track<M, R>(&self, msg: M) -> sink::transient::Tracker<R>
+    where
+        I: From<(M, OneshotSender<R>)>,
+    {
+        self.send.track(msg)
+    }
+}
+
+impl<T, I, O> Clone for JointClient<T, I, O>
 where
-    O: Send + Clone,
+    O: 'static + Send + Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -78,9 +89,9 @@ where
     }
 }
 
-impl<I, O> Stream for JointClient<I, O>
+impl<T, I, O> Stream for JointClient<T, I, O>
 where
-    O: Send + Clone,
+    O: 'static + Send + Clone,
 {
     type Item = O;
 

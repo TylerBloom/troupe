@@ -1,12 +1,8 @@
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::marker::PhantomData;
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{oneshot_channel, ActorBuilder, ActorState, OneshotReceiver, OneshotSender};
+use crate::{oneshot_channel, ActorBuilder, ActorState, OneshotSender, Transient, Permanent};
 
 /// A marker type used by the [`ActorBuilder`] to know what kind of [`ActorState`] it is dealing
 /// with. A sink actor is one that receives messages from other parts of the application. By adding
@@ -18,17 +14,17 @@ use crate::{oneshot_channel, ActorBuilder, ActorState, OneshotReceiver, OneshotS
 /// sink actor can be roughly modelled with an MPSC-style channel (see [`mpsc::channel`]).
 pub struct SinkActor;
 
-pub struct SinkClient<M> {
+pub struct SinkClient<T, M> {
+    ty: PhantomData<T>,
     send: UnboundedSender<M>,
 }
 
-pub struct Tracker<T> {
-    recv: OneshotReceiver<T>,
-}
-
-impl<M> SinkClient<M> {
+impl<T, M> SinkClient<T, M> {
     pub(crate) fn new(send: UnboundedSender<M>) -> Self {
-        Self { send }
+        Self {
+            send,
+            ty: PhantomData,
+        }
     }
 
     pub fn builder<A>(state: A) -> ActorBuilder<A>
@@ -38,39 +34,95 @@ impl<M> SinkClient<M> {
         ActorBuilder::new(state)
     }
 
-    pub fn send(&self, msg: impl Into<M>) {
+    pub fn send(&self, msg: impl Into<M>) -> bool {
         // This returns a result. It only errors when the connected actor panics. Should we "bubble
         // up" that panic?
-        let _ = self.send.send(msg.into());
+        self.send.send(msg.into()).is_ok()
     }
+}
 
-    pub fn track<T, R>(&self, msg: T) -> Tracker<R>
+impl<M> SinkClient<Permanent, M> {
+    pub fn track<I, O>(&self, msg: I) -> permanent::Tracker<O>
     where
-        M: From<(T, OneshotSender<R>)>,
+        M: From<(I, OneshotSender<O>)>,
     {
         let (send, recv) = oneshot_channel();
         let msg = M::from((msg, send));
         self.send(msg);
-        Tracker::new(recv)
+        permanent::Tracker::new(recv)
     }
 }
 
-impl<M> Clone for SinkClient<M> {
+impl<M> SinkClient<Transient, M> {
+    pub fn track<I, O>(&self, msg: I) -> transient::Tracker<O>
+    where
+        M: From<(I, OneshotSender<O>)>,
+    {
+        let (send, recv) = oneshot_channel();
+        let msg = M::from((msg, send));
+        self.send(msg);
+        transient::Tracker::new(recv)
+    }
+}
+
+impl<T, M> Clone for SinkClient<T, M> {
     fn clone(&self) -> Self {
         Self::new(self.send.clone())
     }
 }
 
-impl<T> Tracker<T> {
-    pub fn new(recv: OneshotReceiver<T>) -> Self {
-        Self { recv }
+pub mod permanent {
+    use std::{
+        future::Future,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use crate::OneshotReceiver;
+
+    pub struct Tracker<T> {
+        recv: OneshotReceiver<T>,
+    }
+
+    impl<T> Tracker<T> {
+        pub fn new(recv: OneshotReceiver<T>) -> Self {
+            Self { recv }
+        }
+    }
+
+    impl<T> Future for Tracker<T> {
+        type Output = T;
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            Pin::new(&mut self.recv).poll(cx).map(Result::unwrap)
+        }
     }
 }
 
-impl<T> Future for Tracker<T> {
-    type Output = T;
+pub mod transient {
+    use std::{
+        future::Future,
+        pin::Pin,
+        task::{Context, Poll},
+    };
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.recv).poll(cx).map(Result::unwrap)
+    use crate::OneshotReceiver;
+
+    pub struct Tracker<T> {
+        recv: OneshotReceiver<T>,
+    }
+
+    impl<T> Tracker<T> {
+        pub fn new(recv: OneshotReceiver<T>) -> Self {
+            Self { recv }
+        }
+    }
+
+    impl<T> Future for Tracker<T> {
+        type Output = Option<T>;
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            Pin::new(&mut self.recv).poll(cx).map(Result::ok)
+        }
     }
 }

@@ -14,16 +14,27 @@ use std::{
 
 use crate::{
     compat::{spawn_task, Sendable, SendableFusedStream, SendableFuture, SendableStream},
-    ActorState, Timer,
+    ActorState, Timer, Transient,
 };
 
 type FuturesCollection<T> = FuturesUnordered<Pin<Box<dyn SendableFuture<Output = T>>>>;
+
+/// Encapulates the different states a scheduler can be. Largely used to communicate how a state
+/// wishes to shutdown.
+enum SchedulerStatus {
+    Alive,
+    Marked,
+    MarkedToFinish,
+}
 
 /// The primary bookkeeper for the actor. The state can queue and manage additional futures and
 /// streams with it. The scheduler also tracks if it is possible that another message will be
 /// yielded and processes by the actor. If it finds itself in a state where all streams are closed
 /// and there are no queued futures, it will close the actor; otherwise, the deadlocked actor will
 /// stay in memory during nothing.
+///
+/// Note: If the scheduler finds that the actor is dead but is also managing futures for it, the
+/// scheduler will spawn a new async task to poll those futures to completion.
 pub struct Scheduler<A: ActorState> {
     /// The inbound streams to the actor.
     recv: SelectAll<Fuse<ActorStream<A::Message>>>,
@@ -41,6 +52,8 @@ pub struct Scheduler<A: ActorState> {
     /// the `stream_count` hit both reach zero, the actor is dead as it can no longer process any
     /// messages.
     future_count: usize,
+    /// Tracks the status of the scheduler, mostly used to track how the state wants to shutdown.
+    status: SchedulerStatus,
 }
 
 struct OutboundQueue<M> {
@@ -90,7 +103,8 @@ impl<A: ActorState> ActorRunner<A> {
         self.state.start_up(&mut self.scheduler).await;
         loop {
             if self.scheduler.is_dead() {
-                panic!("Scheduler is dead!!!");
+                self.scheduler.finalize();
+                return;
             }
             let msg = self.scheduler.next().await;
             self.state.process(&mut self.scheduler, msg).await;
@@ -111,12 +125,27 @@ impl<A: ActorState> Scheduler<A> {
             outbound: None,
             stream_count: 0,
             future_count: 0,
+            status: SchedulerStatus::Alive,
         }
     }
 
     /// Returns if the actor is dead and should be dropped.
     fn is_dead(&self) -> bool {
         self.stream_count + self.future_count == 0
+            || matches!(
+                self.status,
+                SchedulerStatus::Marked | SchedulerStatus::MarkedToFinish
+            )
+    }
+
+    /// Performs that final actions before closing the actor process.
+    fn finalize(self) {
+        if matches!(
+            self.status,
+            SchedulerStatus::Alive | SchedulerStatus::MarkedToFinish
+        ) {
+            spawn_task(poll_to_completion(self.tasks))
+        }
     }
 
     /// Yields the next message to be processed by the actor state.
@@ -211,6 +240,30 @@ impl<A: ActorState> Scheduler<A> {
     }
 }
 
+impl<A> Scheduler<A>
+where
+    A: ActorState<Permanence = Transient>,
+{
+    /// Marks the actor as ready to shutdown. After the state finishes processing the current
+    /// message, it will shutdown the actor processes. Any unprocessed messages will be dropped,
+    /// all attached streams will be closed, all futures that will yield a message are
+    /// cancelled, and all managed futures will dropped. If you would like the managed futures
+    /// (non-message) futures to be processed still, use the [`shutdown_and_finish`] method
+    /// instead.
+    pub fn shutdown(&mut self) {
+        self.status = SchedulerStatus::Marked;
+    }
+
+    /// Marks the actor as ready to shutdown. After the state finishes processing the current
+    /// message, it will shutdown the actor processes. Any unprocessed messages will be dropped,
+    /// all attached streams will be closed, all futures that will yield a message are cancelled,
+    /// but all managed futures will be polled to completion in a new async process. If you would
+    /// for all managed futures and streams to be dropped instead, use the [`shutdown`] method.
+    pub fn shutdown_and_finish(&mut self) {
+        self.status = SchedulerStatus::MarkedToFinish;
+    }
+}
+
 impl<M: Sendable> From<UnboundedReceiver<M>> for ActorStream<M> {
     fn from(value: UnboundedReceiver<M>) -> Self {
         Self::Main(UnboundedReceiverStream::new(value))
@@ -229,6 +282,18 @@ impl<M: Sendable> Stream for ActorStream<M> {
         match *self {
             ActorStream::Main(ref mut stream) => Pin::new(stream).poll_next(cx),
             ActorStream::Secondary(ref mut stream) => Pin::new(stream).poll_next(cx),
+        }
+    }
+}
+
+/// A simple function to poll a stream until it is closed. Largely when the scheduler closes.
+async fn poll_to_completion<S>(mut stream: S)
+where
+    S: SendableFusedStream,
+{
+    loop {
+        if stream.next().await.is_none() {
+            return;
         }
     }
 }
