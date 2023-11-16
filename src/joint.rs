@@ -7,6 +7,7 @@ use futures::Stream;
 use pin_project::pin_project;
 
 use crate::{
+    compat::Sendable,
     sink::{self, SinkClient},
     stream::StreamClient,
     Permanent, Transient,
@@ -30,7 +31,7 @@ pub struct JointClient<T, I, O> {
     recv: StreamClient<O>,
 }
 
-impl<T, I, O: 'static + Send + Clone> JointClient<T, I, O> {
+impl<T, I, O: Sendable + Clone> JointClient<T, I, O> {
     /// A constuctor for the client.
     pub(crate) fn new(send: SinkClient<T, I>, recv: StreamClient<O>) -> Self {
         Self { send, recv }
@@ -98,7 +99,7 @@ impl<I, O> JointClient<Transient, I, O> {
 
 impl<T, I, O> Clone for JointClient<T, I, O>
 where
-    O: 'static + Send + Clone,
+    O: Sendable + Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -110,9 +111,9 @@ where
 
 impl<T, I, O> Stream for JointClient<T, I, O>
 where
-    O: 'static + Send + Clone,
+    O: Sendable + Clone,
 {
-    type Item = O;
+    type Item = Result<O, u64>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.project().recv.poll_next(cx)

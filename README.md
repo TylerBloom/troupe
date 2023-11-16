@@ -8,9 +8,12 @@
 Troupe is an experimental, high-level library for modeling your application using the [actor model](https://en.wikipedia.org/wiki/Actor_model).
 Actors model concurrent mutable state via isolated components and message passing.
 This approach enables you to have clear seperation of concerns between different components of your program as well as plainly model how a component can change.
-An actor approach is strongest when you have multiple sources locations where your application can change.
+An actor approach is strongest when:
+  - there are multiple independent sources of mutation in your application
+  - you want to model the data flow through part or all of your system
+  - you want to want to build your system from a series of distinct components that can evolve independently
 
-Troupe was born while building full-stack Rust apps. There, the frontend client authenticated, opens a websocket connection, pulls data from the server, and presents a UI to the user. In the single-threaded envinorment of WASM, it is difficult to manage all of the sources of mutation: UI interactions, updates from the server, etc. There, actors can be used to manage the websocket connection, process data from the server, and propagate it to the rest of the app (including non-actor parts like the UI). The UI can then communicate with the actors to present the UI and process interactions. On the server side, actors can be used to manage websockets, buffer communicate between the database and cached data, and track changes in a user's session info.
+Troupe was born while building full-stack Rust apps. There, the frontend client authenticates, opens a websocket connection, pulls data from the server, and presents a UI to the user. In the single-threaded envinorment of WASM, it is difficult to manage all of the sources of mutation: UI interactions, updates from the server, etc. There, actors can be used to manage the websocket connection, process data from the server, and propagate it to the rest of the app (including non-actor parts like the UI). The UI can then communicate with the actors to present the UI and process interactions. On the server side, actors can be used to manage websockets, buffer communicate between the database and cached data, and track changes in a user's session info.
 
 To achieve isolation, actors in `troupe` are contained within an async processes of existing async runtimes. Because of this, `troupe` is able to support several async runtimes, including `tokio`, `async-std`, and `wasm-bindgen-futures` (for WASM targets), which allows you to slowly incorporate it into your project's architecture. However, actor communication uses `tokio`'s channels regardless of the async runtime.
 

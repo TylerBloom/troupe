@@ -26,6 +26,7 @@ jobs:
       - run: cargo fmt --check
       - run: cargo build --verbose
       - run: cargo test --verbose
+      - run: cargo test --no-default-features --features async-std --verbose
       - run: cargo doc --verbose
   wasm_build:
     name: Wasm Tests
