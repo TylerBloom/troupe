@@ -27,7 +27,7 @@ impl<T> SendableStream for T where T: Sendable + Unpin + Stream {}
 
 /// A trait to abstract over if a fused stream can be managed by the
 /// [`Scheduler`](crate::Scheduler).
-pub trait SendableFusedStream: Sendable + Unpin + FusedStream {}
+pub trait SendableFusedStream: SendableStream + FusedStream {}
 
 impl<T> SendableFusedStream for T where T: SendableStream + FusedStream {}
 

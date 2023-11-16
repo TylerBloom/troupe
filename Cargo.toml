@@ -2,6 +2,18 @@
 name = "troupe"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.74"
+authors = ["Tyler Bloom <tylerbloom2222@gmail.com>"]
+license = "LGPL-2.1"
+readme = "README.md"
+repository = "https://github.com/TylerBloom/troupe"
+description = "Library for modelling Rust applications with actors"
+categories = ["asynchronous"]
+keywords = ["async", "non-blocking", "futures"]
+
+[package.metadata.docs.rs]
+all-features = false
+targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [features]
 default = ["tokio"]

@@ -1,20 +1,19 @@
 //! Troupe provides a high-level toolset for modelling crates with actors. Troupe actors are built
-//! on top of async process, like those created from `tokio::spawn`, and help you model and control
+//! on top of async process, like those created from [`tokio::spawn`], and help you model and control
 //! the flow of information in and out of them. The main goals of `troupe` are to provide:
 //! - An easy to conceptualize data flow
-//! - Simple access to concurrent processing of futures within actors
+//! - Simple access to concurrently processing of futures within actors
 //! - A model that can be adopted into an existing project all at once or over time
 //! - An ergonomic API devoid of magic
 //!
 //! At the core of every actor is an [`ActorState`]. These are the building blocks of modeling your
-//! application with `troupe`. This state fully isolated from the rest of your application and can
-//! only be reached by attaching a stream of inbound messages. For most actors, this stream is
-//! provided by `troupe` in the form of an MSPC-style tokio channel. Regardless of the stream, all
-//! inbound messages pass through the [`Scheduler`], which the state has access to while processing
-//! messages. The state can add new streams of messages, queue futures that yield message, or hand
-//! off futures that yield nothing to the scheduler.
+//! program with `troupe`. This state is fully isolated from the rest of your application and can
+//! only be reached by attaching a stream of inbound messages. For many actors, this stream is
+//! provided by `troupe` in the form of an [`mpsc-style`](tokio::sync::mpsc) tokio channel. All
+//! inbound streams are managed by the [`Scheduler`]. The state can add new streams of messages,
+//! queue futures that yield message, or hand off futures that yield nothing to the scheduler.
 //!
-//! Communication from/to an actor is generally managed by a client. Each actor can define what its
+//! Communication from/to an actor is managed by a client. Each actor state defines how its
 //! clients should function via the [`ActorState`]'s `ActorType`. Conceptually, every actor is
 //! either a `Stream` or `Sink` (or both). An actor that largely receive messages from other parts
 //! of our application is a [`SinkActor`], which use [`SinkClient`]s. An actor that recieves
@@ -22,7 +21,8 @@
 //! messages is a [`StreamActor`], which use [`StreamClient`]s. If an actor does both of these, it
 //! is a [`JointActor`] and uses [`JointClient`]s.
 //!
-//! Troupe also supports WASM by using `wasm-bindgen-futures` to run actors.
+//! Troupe currently supports three async runtimes: tokio, async-std, and the runtime provided by
+//! the browser (via wasm-bindgen-futures).
 
 #![warn(rust_2018_idioms)]
 #![deny(
@@ -43,7 +43,7 @@
     clippy::all
 )]
 
-/// The compatability layer between async runtime and native vs WASM targets.
+/// The compatability layer between async runtimes as well as native vs WASM targets.
 pub mod compat;
 /// Actors that both can be sent messages and broadcast messages.
 pub mod joint;
@@ -57,7 +57,7 @@ pub mod sink;
 pub mod stream;
 
 pub use async_trait::async_trait;
-use compat::{Sendable, SendableStream};
+use compat::{Sendable, SendableFusedStream};
 use joint::{JointActor, JointClient};
 pub use scheduler::Scheduler;
 use scheduler::{ActorRunner, ActorStream};
@@ -68,11 +68,12 @@ pub use tokio::sync::oneshot::{
 };
 
 use std::{
+    marker::PhantomData,
     pin::Pin,
     task::{Context, Poll},
 };
 
-use futures::{stream::FusedStream, Future, StreamExt};
+use futures::{Future, StreamExt};
 use instant::Instant;
 use pin_project::pin_project;
 use tokio::sync::{
@@ -144,7 +145,10 @@ pub struct Transient;
 /// then launches the actor process. When the actor process is launched, a client is returned to
 /// the caller. This client's type depends on the actor's type.
 #[allow(missing_debug_implementations)]
-pub struct ActorBuilder<A: ActorState> {
+pub struct ActorBuilder<T, A: ActorState> {
+    /// The type of actor that is being built. This is the same as `A::ActorType` but
+    /// specialization is not yet supported.
+    ty: PhantomData<T>,
     send: UnboundedSender<A::Message>,
     #[allow(clippy::type_complexity)]
     broadcast: Option<(broadcast::Sender<A::Output>, broadcast::Receiver<A::Output>)>,
@@ -153,9 +157,9 @@ pub struct ActorBuilder<A: ActorState> {
 }
 
 /* --------- All actors --------- */
-impl<A> ActorBuilder<A>
+impl<T, A> ActorBuilder<T, A>
 where
-    A: ActorState,
+    A: ActorState<ActorType = T>,
 {
     /// Constructs a new builder for an actor that uses the given state.
     pub fn new(state: A) -> Self {
@@ -166,6 +170,7 @@ where
             send,
             recv,
             broadcast: None,
+            ty: PhantomData,
         }
     }
 
@@ -173,7 +178,7 @@ where
     /// processed until after the actor is launched.
     pub fn add_stream<S, I>(&mut self, stream: S)
     where
-        S: SendableStream<Item = I> + FusedStream,
+        S: SendableFusedStream<Item = I>,
         I: Into<A::Message>,
     {
         self.recv
@@ -182,19 +187,19 @@ where
 }
 
 /* --------- Sink actors --------- */
-impl<A> ActorBuilder<A>
+impl<A> ActorBuilder<SinkActor, A>
 where
     A: ActorState<ActorType = SinkActor>,
 {
     /// Returns a client for the actor that will be spawned. While the returned client will be able
     /// to send messages, those messages will not be processed until after the actor is launched by
     /// the builder.
-    pub fn sink_client(&self) -> SinkClient<A::Permanence, A::Message> {
+    pub fn client(&self) -> SinkClient<A::Permanence, A::Message> {
         SinkClient::new(self.send.clone())
     }
 
     /// Launches an actor that uses the given state and returns a client to the actor.
-    pub fn launch_sink(self) -> SinkClient<A::Permanence, A::Message> {
+    pub fn launch(self) -> SinkClient<A::Permanence, A::Message> {
         let Self {
             send, recv, state, ..
         } = self;
@@ -206,13 +211,13 @@ where
 }
 
 /* --------- Stream actors --------- */
-impl<A> ActorBuilder<A>
+impl<A> ActorBuilder<StreamActor, A>
 where
     A: ActorState<ActorType = StreamActor>,
 {
     /// Returns a client for the actor that will be spawned. The client will not yield any messages
     /// until after the actor is launched and has sent a message.
-    pub fn stream_client(&mut self) -> StreamClient<A::Output> {
+    pub fn client(&mut self) -> StreamClient<A::Output> {
         let (_, broad) = self
             .broadcast
             .get_or_insert_with(|| broadcast::channel(100));
@@ -220,9 +225,9 @@ where
     }
 
     /// Launches an actor that uses the given state and stream and returns a client to the actor.
-    pub fn launch_stream<S>(self, stream: S) -> StreamClient<A::Output>
+    pub fn launch<S>(self, stream: S) -> StreamClient<A::Output>
     where
-        S: 'static + Send + Unpin + FusedStream<Item = A::Message>,
+        S: SendableFusedStream<Item = A::Message>,
     {
         let Self {
             mut recv,
@@ -241,20 +246,28 @@ where
 }
 
 /* --------- Joint actors --------- */
-impl<A> ActorBuilder<A>
+impl<A> ActorBuilder<JointActor, A>
 where
     A: ActorState<ActorType = JointActor>,
 {
     /// Returns a client for the actor that will be spawned. The client will not yield any messages
     /// until after the actor is launched and has sent a message.
-    pub fn stream(&self) -> StreamClient<A::Output> {
+    pub fn stream_client(&self) -> StreamClient<A::Output> {
         StreamClient::new(self.broadcast.as_ref().unwrap().1.resubscribe())
     }
 
     /// Returns a sink client for the actor that will be spawned. While the returned client will be
     /// able to send messages, those messages will not be processed until after the actor is
     /// launched by the builder.
-    pub fn sink(&self) -> SinkClient<A::Permanence, A::Message> {
+    pub fn sink_client(&self) -> SinkClient<A::Permanence, A::Message> {
+        SinkClient::new(self.send.clone())
+    }
+
+    /// Returns a joint client for the actor that will be spawned. While the returned client will be
+    /// able to send messages, those messages will not be processed until after the actor is
+    /// launched by the builder. The client will also not yield any messages until after the actor
+    /// is launched and has sent a message.
+    pub fn client(&self) -> SinkClient<A::Permanence, A::Message> {
         SinkClient::new(self.send.clone())
     }
 
@@ -264,7 +277,7 @@ where
         stream: S,
     ) -> JointClient<A::Permanence, A::Message, A::Output>
     where
-        S: 'static + Send + Unpin + FusedStream<Item = A::Message>,
+        S: SendableFusedStream<Item = A::Message>,
     {
         self.add_stream(stream);
         self.launch()
@@ -277,6 +290,7 @@ where
             recv,
             state,
             broadcast,
+            ..
         } = self;
         let (broad, sub) = broadcast.unwrap_or_else(|| broadcast::channel(100));
         let mut runner = ActorRunner::new(state);
