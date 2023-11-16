@@ -7,14 +7,15 @@ use futures::Stream;
 use pin_project::pin_project;
 use tokio::sync::broadcast;
 
-/// A marker type used by the [`ActorBuilder`] to know what kind of [`ActorState`] it is dealing
-/// with. A stream actor is one that receives messages from one or streams and then forwards
-/// messages to its clients.
+/// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of
+/// [`ActorState`](crate::ActorState) it is dealing with. A stream actor is one that receives
+/// messages from one or streams and then forwards messages to its clients.
 ///
 /// The client of a [`StreamActor`] is the [`StreamClient`]. This client implements methods for
-/// receiving methods that are "forwarded" by the actor. Unlike the [`SinkActor`], stream actors and
-/// clients don't directly support request/response style communication. Communication between a
-/// stream actor and client(s) can be modelled with a broadcast-style channel (see [`broadcast::channel`]).
+/// receiving methods that are "forwarded" by the actor. Unlike the
+/// [`SinkActor`](crate::sink::SinkActor), stream actors and clients don't directly support
+/// request/response style communication. Communication between a stream actor and client(s) can be
+/// modelled with a broadcast-style channel (see [`broadcast::channel`]).
 #[derive(Debug)]
 pub struct StreamActor;
 

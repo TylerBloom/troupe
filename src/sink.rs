@@ -4,14 +4,15 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{oneshot_channel, OneshotSender, Transient, Permanent};
 
-/// A marker type used by the [`ActorBuilder`] to know what kind of [`ActorState`] it is dealing
-/// with. A sink actor is one that receives messages from other parts of the application. By adding
-/// a [`OneshotChannel`] into the message, the actor can respond with a particular piece of data.
-/// This allows for type-safe communication between different parts of your application.
+/// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of
+/// [`ActorState`](crate::ActorState) it is dealing with. A sink actor is one that receives
+/// messages from other parts of the application. By adding a oneshot channel to the message,
+/// the actor can respond with a particular piece of data. This allows for type-safe communication
+/// between different parts of your application.
 ///
 /// The client of a [`SinkActor`] is the [`SinkClient`]. This client implements methods that allow
-/// for the sending of messages to this client. Communication between a sink client and
-/// sink actor can be roughly modelled with an MPSC-style channel (see [`mpsc::channel`]).
+/// for the sending of messages to this client. Communication between a sink client and sink actor
+/// can be roughly modelled with an MPSC-style channel (see [`mpsc::channel`](tokio::sync::mpsc)).
 #[derive(Debug)]
 pub struct SinkActor;
 
@@ -48,8 +49,8 @@ impl<T, M> SinkClient<T, M> {
 
 impl<M> SinkClient<Permanent, M> {
     /// Sends a request-response style message to a [`Permanent`] actor. The given data is paired
-    /// with a one-time use channel and sent to the actor. A [`Tracker`] that will receive a
-    /// response from the actor is returned.
+    /// with a one-time use channel and sent to the actor. A [`Tracker`](permanent::Tracker) that
+    /// will receive a response from the actor is returned.
     ///
     /// Note: Since this client is one for a permanent actor, there is an implicit unwrap once the
     /// tracker receives a message from the actor. If the actor drops the other half of the channel
@@ -66,9 +67,9 @@ impl<M> SinkClient<Permanent, M> {
 }
 
 impl<M> SinkClient<Transient, M> {
-    /// Sends a request-response style message to a [`Transient`] actor.
-    /// The given data is paired with a one-time use channel and sent to the actor.
-    /// A [`Tracker`] that will receive a response from the actor is returned.
+    /// Sends a request-response style message to a [`Transient`] actor. The given data is paired
+    /// with a one-time use channel and sent to the actor. A [`Tracker`](transient::Tracker) that
+    /// will receive a response from the actor is returned.
     pub fn track<I, O>(&self, msg: I) -> transient::Tracker<O>
     where
         M: From<(I, OneshotSender<O>)>,
@@ -96,7 +97,7 @@ pub mod permanent {
 
     use crate::OneshotReceiver;
 
-    /// A tracker for a request-response style message sent to a [`Permanent`] actor.
+    /// A tracker for a request-response style message sent to a [`Permanent`](crate::Permanent) actor.
     ///
     /// Note: This tracker implicitly unwraps the message produced by its channel receiver. If the
     /// actor drops the other half of the channel or has died somehow (likely from a panic), this
@@ -132,7 +133,7 @@ pub mod transient {
 
     use crate::OneshotReceiver;
 
-    /// A tracker for a request-response style message sent to a [`Trasient`] actor.
+    /// A tracker for a request-response style message sent to a [`Transient`](crate::Transient) actor.
     ///
     /// Note: This tracker might be created after a failed attempt to send a message to a dead
     /// actor. This means that the tracker will return `None` when polled; however, that does not

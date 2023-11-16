@@ -24,14 +24,10 @@
 //!
 //! Troupe also supports WASM by using `wasm-bindgen-futures` to run actors.
 
-// TODO:
-//  - Add docs to everything
-//  - Review docs pages
-
 #![warn(rust_2018_idioms)]
 #![deny(
     missing_docs,
-    // rustdoc::broken_intra_doc_links,
+    rustdoc::broken_intra_doc_links,
     missing_debug_implementations,
     unreachable_pub,
     unreachable_patterns,
@@ -90,9 +86,9 @@ use crate::compat::{sleep_until, Sleep};
 // `Sendable`.
 /// The core abstraction of the actor model. An [`ActorState`] sits at the heart of every actor. It
 /// processes messages, queues futures and streams in the [`Scheduler`] that yield messages, and it
-/// can forward more messages. Actors serves two roles. They can act similarly to a [`Sink`] where
+/// can forward more messages. Actors serves two roles. They can act similarly to a [`Sink`](futures::Sink) where
 /// other parts of your application (including other actors) since messages into the actor. They
-/// can also act as a [`Stream`] that generate messages to be sent throughout your application.
+/// can also act as a [`Stream`](futures::Stream) that generate messages to be sent throughout your application.
 /// This role is denoted by the actor's `ActorType`, which informs the [`ActorBuilder`] what kind
 /// of actor it is working with. For sink-like actors, use the [`SinkActor`] type. For stream-like
 /// actors, use the [`StreamActor`] type. For actors that function as both, use the [`JointActor`]
@@ -124,22 +120,22 @@ pub trait ActorState: 'static + Send + Sized {
 
     /// The heart of the actor. This method consumes messages from clients and queued futures and
     /// streams. For [`SinkActor`]s and [`JointActor`]s, the state "responds" to messages with a
-    /// [`OneshotChannel`]. The state can also queue futures and streams in the [`Scheduler`].
-    /// Finally, for [`StreamActor`]s and [`JointActor`]s, any messages to forwarded can be queued
-    /// in the [`Scheduler`].
+    /// [`OneshotChannel`](tokio::sync::oneshot::channel). The state can also queue futures and
+    /// streams in the [`Scheduler`]. Finally, for [`StreamActor`]s and [`JointActor`]s, any
+    /// messages to forwarded can be queued in the [`Scheduler`].
     async fn process(&mut self, scheduler: &mut Scheduler<Self>, msg: Self::Message);
 }
 
 /// A marker type used in the [`ActorState`]. It communicates that the actor should never die. As
 /// such, the [`Scheduler`] will not provide the actor state a method to shutdown. Also, the
-/// [`Tracker`]s for request-response style messages will implictly unwrap responses from their
+/// [`Tracker`](crate::sink::permanent::Tracker)s for request-response style messages will implictly unwrap responses from their
 /// oneshot channels.
 #[derive(Debug)]
 pub struct Permanent;
 
 /// A marker type used in the [`ActorState`]. It communicates that the actor should exist for a
 /// non-infinite amount of time. The [`Scheduler`] will provide the actor state a method to
-/// shutdown. Also, the [`Tracker`]s for request-response style messages will not implictly unwrap
+/// shutdown. Also, the [`Tracker`](crate::sink::permanent::Tracker)s for request-response style messages will not implictly unwrap
 /// responses from their oneshot channels.
 #[derive(Debug)]
 pub struct Transient;

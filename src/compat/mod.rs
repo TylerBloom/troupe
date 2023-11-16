@@ -20,12 +20,13 @@ pub trait SendableFuture: Sendable + Future {}
 
 impl<T> SendableFuture for T where T: Sendable + Future {}
 
-/// A trait to abstract over if a stream can be managed by the [`Scheduler`].
+/// A trait to abstract over if a stream can be managed by the [`Scheduler`](crate::Scheduler).
 pub trait SendableStream: Sendable + Unpin + Stream {}
 
 impl<T> SendableStream for T where T: Sendable + Unpin + Stream {}
 
-/// A trait to abstract over if a fused stream can be managed by the [`Scheduler`].
+/// A trait to abstract over if a fused stream can be managed by the
+/// [`Scheduler`](crate::Scheduler).
 pub trait SendableFusedStream: Sendable + Unpin + FusedStream {}
 
 impl<T> SendableFusedStream for T where T: SendableStream + FusedStream {}
