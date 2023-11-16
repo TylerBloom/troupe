@@ -53,8 +53,7 @@ pub(crate) mod scheduler;
 pub mod sink;
 pub mod stream;
 
-pub use async_trait::async_trait;
-use compat::{Sendable, SendableFusedStream, SendableWrapper};
+use compat::{Sendable, SendableFusedStream, SendableFuture, SendableWrapper};
 use joint::{JointActor, JointClient};
 pub use scheduler::Scheduler;
 use scheduler::{ActorRunner, ActorStream};
@@ -81,8 +80,7 @@ use tokio::sync::{
 /// `ActorType`, which informs the [`ActorBuilder`] what kind of actor it is working with. For
 /// sink-like actors, use the [`SinkActor`] type. For stream-like actors, use the [`StreamActor`]
 /// type. For actors that function as both, use the [`JointActor`] type.
-#[async_trait]
-pub trait ActorState: 'static + Send + Sized {
+pub trait ActorState: Sendable + Sized {
     /// This type should either be [`SinkActor`], [`StreamActor`], or [`JointActor`]. This type is
     /// mostly a marker to inform the [`ActorBuilder`].
     type ActorType;
@@ -105,20 +103,28 @@ pub trait ActorState: 'static + Send + Sized {
     /// setup of the actor state, such as pulling data from a database or from over the network. No
     /// inbound messages will be processed until this method is completed.
     #[allow(unused_variables)]
-    async fn start_up(&mut self, scheduler: &mut Scheduler<Self>) {}
+    fn start_up(&mut self, scheduler: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
+        std::future::ready(())
+    }
 
     /// The heart of the actor. This method consumes messages attached streams and queued futures
     /// and streams. For [`SinkActor`]s and [`JointActor`]s, the state can "respond" to messages
     /// containing a [`OneshotChannel`](tokio::sync::oneshot::channel) sender. The state can also
     /// queue futures and attach streams in the [`Scheduler`]. Finally, for [`StreamActor`]s and
     /// [`JointActor`]s, the state can broadcast messages via [`Scheduler`].
-    async fn process(&mut self, scheduler: &mut Scheduler<Self>, msg: Self::Message);
+    fn process(
+        &mut self,
+        scheduler: &mut Scheduler<Self>,
+        msg: Self::Message,
+    ) -> impl SendableFuture<Output = ()>;
 
     /// Once the actor has died, this method is called to allow the actor to clean up anything that
     /// remains. Note that this method is also called even for [`Permanent`] actors that have
     /// expired.
     #[allow(unused_variables)]
-    async fn finalize(self, scheduler: &mut Scheduler<Self>) {}
+    fn finalize(self, scheduler: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
+        std::future::ready(())
+    }
 }
 
 /// A marker type used in the [`ActorState`]. It communicates that the actor should never die. As
