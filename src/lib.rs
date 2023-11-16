@@ -87,13 +87,13 @@ use crate::compat::{sleep_until, Sleep};
 // `Sendable`.
 /// The core abstraction of the actor model. An [`ActorState`] sits at the heart of every actor. It
 /// processes messages, queues futures and streams in the [`Scheduler`] that yield messages, and it
-/// can forward more messages. Actors serves two roles. They can act similarly to a [`Sink`](futures::Sink) where
-/// other parts of your application (including other actors) since messages into the actor. They
-/// can also act as a [`Stream`](futures::Stream) that generate messages to be sent throughout your application.
-/// This role is denoted by the actor's `ActorType`, which informs the [`ActorBuilder`] what kind
-/// of actor it is working with. For sink-like actors, use the [`SinkActor`] type. For stream-like
-/// actors, use the [`StreamActor`] type. For actors that function as both, use the [`JointActor`]
-/// type.
+/// can forward messages. Actors serves two roles. They can act similarly to a
+/// [`Sink`](futures::Sink) where other parts of your application (including other actors) since
+/// messages into the actor. They can also act as a [`Stream`](futures::Stream) that generate
+/// messages to be sent throughout your application. This role is denoted by the actor's
+/// `ActorType`, which informs the [`ActorBuilder`] what kind of actor it is working with. For
+/// sink-like actors, use the [`SinkActor`] type. For stream-like actors, use the [`StreamActor`]
+/// type. For actors that function as both, use the [`JointActor`] type.
 #[async_trait]
 pub trait ActorState: 'static + Send + Sized {
     /// This type should either be [`SinkActor`], [`StreamActor`], or [`JointActor`]. This type is
@@ -125,6 +125,12 @@ pub trait ActorState: 'static + Send + Sized {
     /// streams in the [`Scheduler`]. Finally, for [`StreamActor`]s and [`JointActor`]s, any
     /// messages to forwarded can be queued in the [`Scheduler`].
     async fn process(&mut self, scheduler: &mut Scheduler<Self>, msg: Self::Message);
+
+    /// Once the actor has died, this method is called to allow the actor to clean up anything that
+    /// remains. Note that this method is also called even for [`Permanent`] actors that have
+    /// expired.
+    #[allow(unused_variables)]
+    async fn finalize(self, scheduler: &mut Scheduler<Self>) {}
 }
 
 /// A marker type used in the [`ActorState`]. It communicates that the actor should never die. As
@@ -204,7 +210,7 @@ where
             send, recv, state, ..
         } = self;
         let mut runner = ActorRunner::new(state);
-        recv.into_iter().for_each(|r| runner.add_stream(r.fuse()));
+        recv.into_iter().for_each(|r| runner.add_stream(r));
         runner.launch();
         SinkClient::new(send)
     }
@@ -239,7 +245,7 @@ where
         recv.push(ActorStream::Secondary(Box::new(stream)));
         let mut runner = ActorRunner::new(state);
         runner.add_broadcaster(broad);
-        recv.into_iter().for_each(|r| runner.add_stream(r.fuse()));
+        recv.into_iter().for_each(|r| runner.add_stream(r));
         runner.launch();
         StreamClient::new(sub)
     }
@@ -294,7 +300,7 @@ where
         } = self;
         let (broad, sub) = broadcast.unwrap_or_else(|| broadcast::channel(100));
         let mut runner = ActorRunner::new(state);
-        recv.into_iter().for_each(|r| runner.add_stream(r.fuse()));
+        recv.into_iter().for_each(|r| runner.add_stream(r));
         runner.add_broadcaster(broad);
         runner.launch();
         let sink = SinkClient::new(send);

@@ -88,12 +88,8 @@ impl<A: ActorState> ActorRunner<A> {
         self.scheduler.outbound = Some(OutboundQueue::new(broad));
     }
 
-    pub(crate) fn add_stream<S, M>(&mut self, stream: S)
-    where
-        S: SendableFusedStream<Item = M>,
-        M: Into<A::Message>,
-    {
-        self.scheduler.add_stream(stream);
+    pub(crate) fn add_stream(&mut self, stream: ActorStream<A::Message>) {
+        self.scheduler.add_stream_inner(stream);
     }
 
     pub(crate) fn launch(self) {
@@ -103,13 +99,21 @@ impl<A: ActorState> ActorRunner<A> {
     async fn run(mut self) {
         self.state.start_up(&mut self.scheduler).await;
         loop {
-            if self.scheduler.is_dead() {
-                self.scheduler.finalize();
-                return;
+            match self.scheduler.next().await {
+                Some(msg) => self.state.process(&mut self.scheduler, msg).await,
+                None => return self.close().await,
             }
-            let msg = self.scheduler.next().await;
-            self.state.process(&mut self.scheduler, msg).await;
         }
+    }
+
+    /// Closes the actor state.
+    async fn close(self) {
+        let Self {
+            state,
+            mut scheduler,
+        } = self;
+        state.finalize(&mut scheduler).await;
+        scheduler.finalize();
     }
 }
 
@@ -150,12 +154,15 @@ impl<A: ActorState> Scheduler<A> {
     }
 
     /// Yields the next message to be processed by the actor state.
-    async fn next(&mut self) -> A::Message {
+    async fn next(&mut self) -> Option<A::Message> {
         loop {
+            if self.is_dead() {
+                return None;
+            }
             tokio::select! {
                 msg = self.recv.next(), if self.stream_count != 0 => {
                     match msg {
-                        Some(msg) => return msg,
+                        Some(msg) => return Some(msg),
                         None => {
                             self.stream_count -= 1;
                         }
@@ -163,11 +170,11 @@ impl<A: ActorState> Scheduler<A> {
                 },
                 msg = self.queue.next(), if self.future_count != 0 => {
                     self.future_count -= 1;
-                    return msg.unwrap();
+                    return msg
                 },
                 _ = self.tasks.next(), if !self.tasks.is_empty() => {},
                 else => {
-                    panic!("Scheduler is dead!!!");
+                    return None
                 }
             }
         }
@@ -213,9 +220,14 @@ impl<A: ActorState> Scheduler<A> {
         S: SendableStream<Item = I> + FusedStream,
         I: Into<A::Message>,
     {
+        let stream = ActorStream::Secondary(Box::new(stream.map(|m| m.into())));
+        self.add_stream_inner(stream)
+    }
+
+    /// Adds an actor stream to the scheduler.
+    fn add_stream_inner(&mut self, stream: ActorStream<A::Message>) {
         self.stream_count += 1;
-        self.recv
-            .push(ActorStream::Secondary(Box::new(stream.map(|m| m.into()))).fuse());
+        self.recv.push(stream.fuse());
     }
 
     /// Schedules a message to be given to the actor to process at a given time.

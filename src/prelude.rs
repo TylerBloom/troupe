@@ -5,5 +5,5 @@ pub use crate::{
     scheduler::Scheduler,
     sink::{SinkActor, SinkClient},
     stream::{StreamActor, StreamClient},
-    ActorBuilder, ActorState, OneshotReceiver, OneshotSender,
+    ActorBuilder, ActorState, OneshotReceiver, OneshotSender, Permanent, Transient,
 };
