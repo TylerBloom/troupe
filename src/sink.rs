@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{oneshot_channel, OneshotSender, Transient, Permanent};
+use crate::{oneshot_channel, OneshotSender, Permanent, Transient};
 
 /// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of
 /// [`ActorState`](crate::ActorState) it is dealing with. A sink actor is one that receives
@@ -126,9 +126,10 @@ pub mod permanent {
 /// A module for things used to interact with the [`Transient`] actors.
 pub mod transient {
     use std::{
+        fmt::Debug,
         future::Future,
         pin::Pin,
-        task::{Context, Poll}, fmt::Debug,
+        task::{Context, Poll},
     };
 
     use crate::OneshotReceiver;

@@ -213,7 +213,9 @@ where
     /// Returns a client for the actor that will be spawned. The client will not yield any messages
     /// until after the actor is launched and has sent a message.
     pub fn stream_client(&mut self) -> StreamClient<A::Output> {
-        let (_, broad) = self.broadcast.get_or_insert_with(|| broadcast::channel(100));
+        let (_, broad) = self
+            .broadcast
+            .get_or_insert_with(|| broadcast::channel(100));
         StreamClient::new(broad.resubscribe())
     }
 
@@ -257,7 +259,10 @@ where
     }
 
     /// Launches an actor that uses the given state and stream and returns a client to the actor.
-    pub fn launch_with_stream<S>(mut self, stream: S) -> JointClient<A::Permanence, A::Message, A::Output>
+    pub fn launch_with_stream<S>(
+        mut self,
+        stream: S,
+    ) -> JointClient<A::Permanence, A::Message, A::Output>
     where
         S: 'static + Send + Unpin + FusedStream<Item = A::Message>,
     {

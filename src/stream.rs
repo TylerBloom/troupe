@@ -76,7 +76,10 @@ impl<M: 'static + Send + Clone> Stream for BroadcastStream<M> {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
-        let digest = this.inner.poll_next(cx).map(|res| res.transpose().ok().flatten());
+        let digest = this
+            .inner
+            .poll_next(cx)
+            .map(|res| res.transpose().ok().flatten());
         if digest.is_ready() {
             drop(this.copy.try_recv());
         }
