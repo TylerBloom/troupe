@@ -33,8 +33,8 @@ pub enum CacheCommand {
 }
 ```
 
-The message type encapsulates how the state can change and what data the actor has to process. These messages are send from various source to be processed by the state. To finish the actor, `Cache` just has to implement the `ActorState` trait.
-```
+The message type encapsulates how the state can change and what data the actor has to process. These messages are sent from various source to be processed by the state. To finish the actor, `Cache` just has to implement the `ActorState` trait.
+```rust
 impl ActorState for Cache {
     type Message = CacheCommand;
     type ActorType = SinkActor;
@@ -81,7 +81,7 @@ The last major component of the `troupe` actor model is permanence. Some actors 
 
 Lastly, there is built-in "garbage collection" for troupe actors. The scheduler will mark an actor as "dead" and then close the actor process down if all of its held streams close and it is holding no futures that can yield future messages. This check occurs regardless of the user-defined permanence of the actor.
 
-# Backwards Compatability
+# Backwards Compatibility
 Troupe is currently experimental and subject to potential breaking changes (with due consideration). Breaking changes might occur to improve API ergonomics, tweak the actor model, or use new Rust language features. In particular, there are several language features that will be used improve this crate upon stabilization:
  - [`async fn` in traits]
  - [specialization]
