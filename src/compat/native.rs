@@ -1,3 +1,12 @@
+use futures::Stream;
+use pin_project::pin_project;
+use std::{
+    future::Future,
+    ops::{Deref, DerefMut},
+    pin::Pin,
+    task::{Context, Poll},
+};
+
 /* ------ Send workarounds ------ */
 
 /// This trait abstracts over the requirements for spawning a task. In native async runtimes, a
@@ -9,6 +18,67 @@ pub trait Sendable: 'static + Send {}
 
 impl<T> Sendable for T where T: 'static + Send {}
 
+/// Because `async_trait` requires that trait futures are [`Send`] and the non-`Send` alternative
+/// is worse, both the [`ActorState`] and [`Scheduler`] must be `Send`. This is a problem for WASM.
+/// This wrapper provides a uniform interfaces between WASM and non-WASM targets through which a
+/// `Send` workaround can be implemented.
+///
+/// For non-WASM targets, this wrapper is a transparent wrapper.
+#[derive(Debug)]
+#[pin_project]
+pub struct SendableWrapper<T>(#[pin] T);
+
+impl<T> SendableWrapper<T>
+where
+    T: Sendable,
+{
+    /// Constructs a wrapper around the given value.
+    pub fn new(inner: T) -> Self {
+        Self(inner)
+    }
+
+    /// Removes the inner value from the wrapper.
+    pub fn take(self) -> T {
+        self.0
+    }
+}
+
+impl<T: Sendable> Deref for SendableWrapper<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: Sendable> DerefMut for SendableWrapper<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T: Sendable + Clone> Clone for SendableWrapper<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T: SendableFuture> Future for SendableWrapper<T> {
+    type Output = <T as Future>::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.project().0.poll(cx)
+    }
+}
+
+impl<T: SendableStream> Stream for SendableWrapper<T> {
+    type Item = <T as Stream>::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project().0.poll_next(cx)
+    }
+}
+
 /* ------ General Utils ------ */
 
 #[cfg(all(feature = "tokio", feature = "async-std"))]
@@ -19,6 +89,8 @@ pub use tokio::*;
 
 #[cfg(feature = "async-std")]
 pub use async_std::*;
+
+use super::{SendableFuture, SendableStream};
 
 #[cfg(feature = "tokio")]
 mod tokio {

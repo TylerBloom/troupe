@@ -8,6 +8,7 @@ use std::{
 };
 
 use super::SendableFuture;
+use send_wrapper::SendWrapper;
 
 /* ------ Send workarounds ------ */
 
@@ -19,6 +20,15 @@ use super::SendableFuture;
 pub trait Sendable: 'static {}
 
 impl<T> Sendable for T where T: 'static {}
+
+/// Because `async_trait` requires that trait futures are [`Send`] and the non-`Send` alternative
+/// is worse, both the [`ActorState`] and [`Scheduler`] must be `Send`. This is a problem for WASM.
+/// This wrapper provides a uniform interfaces between WASM and non-WASM targets through which a
+/// `Send` workaround can be implemented.
+///
+/// For WASM targets, this wrapper is just [`SendWrapper`]. This is completely safe to use as WASM
+/// applications are strictly bound to a single thread, so this wrapper will never panic.
+pub type SendableWrapper<T> = SendWrapper<T>;
 
 /* ------ General Utils ------ */
 

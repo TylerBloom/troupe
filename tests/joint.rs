@@ -41,6 +41,18 @@ async fn sleep() {
     sleep_for(Duration::from_millis(10)).await
 }
 
+#[test]
+fn are_send() {
+    fn is_send<T: Send>() {}
+
+    is_send::<DummyJoint>();
+    is_send::<JointActor>();
+    is_send::<Permanent>();
+    is_send::<Started>();
+    is_send::<Processed>();
+    is_send::<Completed>();
+}
+
 #[tokio::test]
 async fn startup_and_teardown() {
     let (started, mut started_recv) = oneshot_channel();

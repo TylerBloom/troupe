@@ -13,7 +13,9 @@ use std::{
 };
 
 use crate::{
-    compat::{spawn_task, Sendable, SendableFusedStream, SendableFuture, SendableStream},
+    compat::{
+        spawn_task, Sendable, SendableFusedStream, SendableFuture, SendableStream, SendableWrapper,
+    },
     ActorState, Timer, Transient,
 };
 
@@ -38,13 +40,13 @@ enum SchedulerStatus {
 #[allow(missing_debug_implementations)]
 pub struct Scheduler<A: ActorState> {
     /// The inbound streams to the actor.
-    recv: SelectAll<Fuse<ActorStream<A::Message>>>,
+    recv: SendableWrapper<SelectAll<Fuse<ActorStream<A::Message>>>>,
     /// Futures that the actor has queued that will yield a message.
-    queue: FuturesCollection<A::Message>,
+    queue: SendableWrapper<FuturesCollection<A::Message>>,
     /// Futures that yield nothing that the scheduler will manage and poll for the actor.
-    tasks: FuturesCollection<()>,
+    tasks: SendableWrapper<FuturesCollection<()>>,
     /// The manager for outbound messages that will be broadcast from the actor.
-    outbound: Option<OutboundQueue<A::Output>>,
+    outbound: Option<SendableWrapper<OutboundQueue<A::Output>>>,
     /// The number of stream that could yield a message for the actor to process. Once this and the
     /// `future_count` hit both reach zero, the actor is dead as it can no longer process any
     /// messages.
@@ -58,16 +60,16 @@ pub struct Scheduler<A: ActorState> {
 }
 
 struct OutboundQueue<M> {
-    send: broadcast::Sender<M>,
+    send: broadcast::Sender<SendableWrapper<M>>,
 }
 
 impl<M: Sendable + Clone> OutboundQueue<M> {
-    fn new(send: broadcast::Sender<M>) -> Self {
+    fn new(send: broadcast::Sender<SendableWrapper<M>>) -> Self {
         Self { send }
     }
 
     fn send(&mut self, msg: M) {
-        let _ = self.send.send(msg);
+        let _ = self.send.send(SendableWrapper::new(msg));
     }
 }
 
@@ -84,8 +86,8 @@ impl<A: ActorState> ActorRunner<A> {
         Self { state, scheduler }
     }
 
-    pub(crate) fn add_broadcaster(&mut self, broad: broadcast::Sender<A::Output>) {
-        self.scheduler.outbound = Some(OutboundQueue::new(broad));
+    pub(crate) fn add_broadcaster(&mut self, broad: broadcast::Sender<SendableWrapper<A::Output>>) {
+        self.scheduler.outbound = Some(SendableWrapper::new(OutboundQueue::new(broad)));
     }
 
     pub(crate) fn add_stream(&mut self, stream: ActorStream<A::Message>) {
@@ -120,9 +122,9 @@ impl<A: ActorState> ActorRunner<A> {
 impl<A: ActorState> Scheduler<A> {
     /// The constructor for the scheduler.
     fn new() -> Self {
-        let recv = select_all([]);
-        let queue = FuturesCollection::new();
-        let tasks = FuturesCollection::new();
+        let recv = SendableWrapper::new(select_all([]));
+        let queue = SendableWrapper::new(FuturesCollection::new());
+        let tasks = SendableWrapper::new(FuturesCollection::new());
         Self {
             recv,
             queue,
@@ -149,7 +151,7 @@ impl<A: ActorState> Scheduler<A> {
             self.status,
             SchedulerStatus::Alive | SchedulerStatus::MarkedToFinish
         ) {
-            spawn_task(poll_to_completion(self.tasks))
+            spawn_task(poll_to_completion(self.tasks.take()))
         }
     }
 
