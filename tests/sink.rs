@@ -1,6 +1,9 @@
 use instant::Duration;
 use tokio::sync::oneshot::error::TryRecvError;
-use troupe::{compat::sleep_for, prelude::*};
+use troupe::{
+    compat::{sleep_for, SendableFuture},
+    prelude::*,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 struct Started;
@@ -13,21 +16,31 @@ struct DummySink {
     completed: OneshotSender<Completed>,
 }
 
-#[async_trait]
 impl ActorState for DummySink {
     type ActorType = SinkActor;
     type Permanence = Permanent;
     type Message = ();
     type Output = ();
 
-    async fn start_up(&mut self, _: &mut Scheduler<Self>) {
+    fn start_up(
+        &mut self,
+        _: &mut Scheduler<Self>,
+    ) -> impl troupe::compat::SendableFuture<Output = ()> {
         self.started.take().unwrap().send(Started).unwrap();
+        std::future::ready(())
     }
 
-    async fn process(&mut self, _: &mut Scheduler<Self>, _: Self::Message) {}
+    fn process(
+        &mut self,
+        _: &mut Scheduler<Self>,
+        _: Self::Message,
+    ) -> impl SendableFuture<Output = ()> {
+        std::future::ready(())
+    }
 
-    async fn finalize(self, _: &mut Scheduler<Self>) {
+    fn finalize(self, _: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
         self.completed.send(Completed).unwrap();
+        std::future::ready(())
     }
 }
 

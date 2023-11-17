@@ -17,23 +17,29 @@ struct DummyStream {
     completed: OneshotSender<Completed>,
 }
 
-#[async_trait]
 impl ActorState for DummyStream {
     type ActorType = StreamActor;
     type Permanence = Permanent;
     type Message = Processed;
     type Output = Processed;
 
-    async fn start_up(&mut self, _: &mut Scheduler<Self>) {
+    fn start_up(&mut self, _: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
         self.started.take().unwrap().send(Started).unwrap();
+        std::future::ready(())
     }
 
-    async fn process(&mut self, scheduler: &mut Scheduler<Self>, msg: Self::Message) {
+    fn process(
+        &mut self,
+        scheduler: &mut Scheduler<Self>,
+        msg: Self::Message,
+    ) -> impl SendableFuture<Output = ()> {
         scheduler.broadcast(msg);
+        std::future::ready(())
     }
 
-    async fn finalize(self, _: &mut Scheduler<Self>) {
+    fn finalize(self, _: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
         self.completed.send(Completed).unwrap();
+        std::future::ready(())
     }
 }
 
