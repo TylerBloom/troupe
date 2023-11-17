@@ -19,9 +19,9 @@ pub trait Sendable: 'static + Send {}
 impl<T> Sendable for T where T: 'static + Send {}
 
 /// Because `async_trait` requires that trait futures are [`Send`] and the non-`Send` alternative
-/// is worse, both the [`ActorState`] and [`Scheduler`] must be `Send`. This is a problem for WASM.
-/// This wrapper provides a uniform interfaces between WASM and non-WASM targets through which a
-/// `Send` workaround can be implemented.
+/// is worse, both the [`ActorState`](crate::ActorState) and [`Scheduler`](crate::Scheduler) must
+/// be `Send`. This is a problem for WASM. This wrapper provides a uniform interfaces between WASM
+/// and non-WASM targets through which a `Send` workaround can be implemented.
 ///
 /// For non-WASM targets, this wrapper is a transparent wrapper.
 #[derive(Debug)]

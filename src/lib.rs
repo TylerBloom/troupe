@@ -1,5 +1,5 @@
 //! Troupe provides a high-level toolset for modelling crates with actors. Troupe actors are built
-//! on top of async process, like those created from [`tokio::spawn`], and help you model and control
+//! on top of async process, like those created from `tokio::spawn`, and help you model and control
 //! the flow of information in and out of them. The main goals of `troupe` are to provide:
 //! - An easy to conceptualize data flow
 //! - Simple access to concurrently processing of futures within actors

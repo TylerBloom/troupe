@@ -43,3 +43,4 @@ jobs:
       - run: cargo build --target=wasm32-unknown-unknown --verbose
       - run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - run: wasm-pack test --headless --chrome --firefox --verbose
+      - run: cargo doc --target wasm32-unknown-unknown --verbose
