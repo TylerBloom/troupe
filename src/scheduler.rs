@@ -43,13 +43,13 @@ enum SchedulerStatus {
 #[allow(missing_debug_implementations)]
 pub struct Scheduler<A: ActorState> {
     /// The inbound streams to the actor.
-    recv: SendableWrapper<SelectAll<Fuse<ActorStream<A::Message>>>>,
+    recv: SelectAll<Fuse<ActorStream<A::Message>>>,
     /// Futures that the actor has queued that will yield a message.
-    queue: SendableWrapper<FuturesCollection<A::Message>>,
+    queue: FuturesCollection<A::Message>,
     /// Futures that yield nothing that the scheduler will manage and poll for the actor.
-    tasks: SendableWrapper<FuturesCollection<()>>,
+    tasks: FuturesCollection<()>,
     /// The manager for outbound messages that will be broadcast from the actor.
-    outbound: Option<SendableWrapper<OutboundQueue<A::Output>>>,
+    outbound: Option<OutboundQueue<A::Output>>,
     /// The number of stream that could yield a message for the actor to process. Once this and the
     /// `future_count` hit both reach zero, the actor is dead as it can no longer process any
     /// messages.
@@ -90,7 +90,7 @@ impl<A: ActorState> ActorRunner<A> {
     }
 
     pub(crate) fn add_broadcaster(&mut self, broad: broadcast::Sender<SendableWrapper<A::Output>>) {
-        self.scheduler.outbound = Some(SendableWrapper::new(OutboundQueue::new(broad)));
+        self.scheduler.outbound = Some(OutboundQueue::new(broad));
     }
 
     pub(crate) fn add_stream(&mut self, stream: ActorStream<A::Message>) {
@@ -125,9 +125,9 @@ impl<A: ActorState> ActorRunner<A> {
 impl<A: ActorState> Scheduler<A> {
     /// The constructor for the scheduler.
     fn new() -> Self {
-        let recv = SendableWrapper::new(select_all([]));
-        let queue = SendableWrapper::new(FuturesCollection::new());
-        let tasks = SendableWrapper::new(FuturesCollection::new());
+        let recv = select_all([]);
+        let queue = FuturesCollection::new();
+        let tasks = FuturesCollection::new();
         Self {
             recv,
             queue,
@@ -154,7 +154,7 @@ impl<A: ActorState> Scheduler<A> {
             self.status,
             SchedulerStatus::Alive | SchedulerStatus::MarkedToFinish
         ) {
-            spawn_task(poll_to_completion(self.tasks.take()))
+            spawn_task(poll_to_completion(self.tasks))
         }
     }
 
