@@ -3,6 +3,7 @@ use futures::{
     FutureExt, Stream, StreamExt,
 };
 use instant::Instant;
+use pin_project::pin_project;
 use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -14,9 +15,10 @@ use std::{
 
 use crate::{
     compat::{
-        spawn_task, Sendable, SendableFusedStream, SendableFuture, SendableStream, SendableWrapper,
+        sleep_until, spawn_task, Sendable, SendableFusedStream, SendableFuture, SendableStream,
+        SendableWrapper, Sleep,
     },
-    ActorState, Timer, Transient,
+    ActorState, Transient,
 };
 
 type FuturesCollection<T> = FuturesUnordered<Pin<Box<dyn SendableFuture<Output = T>>>>;
@@ -312,6 +314,37 @@ where
     loop {
         if stream.next().await.is_none() {
             return;
+        }
+    }
+}
+
+/// A message and sleep timer pair. Once the timer has elapsed and is polled, the message is taken
+/// from the inner option and returned. After that point, the timer should not be polled again.
+#[pin_project]
+#[allow(missing_debug_implementations)]
+pub(crate) struct Timer<T> {
+    #[pin]
+    deadline: Sleep,
+    msg: Option<T>,
+}
+
+impl<T> Timer<T> {
+    pub(crate) fn new(deadline: Instant, msg: T) -> Self {
+        Self {
+            deadline: sleep_until(deadline),
+            msg: Some(msg),
+        }
+    }
+}
+
+impl<T> Future for Timer<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        match this.deadline.poll(cx) {
+            Poll::Ready(()) => Poll::Ready(this.msg.take().unwrap()),
+            Poll::Pending => Poll::Pending,
         }
     }
 }

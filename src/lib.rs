@@ -67,21 +67,13 @@ pub use tokio::sync::oneshot::{
     channel as oneshot_channel, Receiver as OneshotReceiver, Sender as OneshotSender,
 };
 
-use std::{
-    marker::PhantomData,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::marker::PhantomData;
 
-use futures::{Future, StreamExt};
-use instant::Instant;
-use pin_project::pin_project;
+use futures::StreamExt;
 use tokio::sync::{
     broadcast,
     mpsc::{unbounded_channel, UnboundedSender},
 };
-
-use crate::compat::{sleep_until, Sleep};
 
 // This state needs to be send because of constraints of `async_trait`. Ideally, it would be
 // `Sendable`.
@@ -309,38 +301,5 @@ where
         let sink = SinkClient::new(send);
         let stream = StreamClient::new(sub);
         JointClient::new(sink, stream)
-    }
-}
-
-/* -------- To move -------- */
-
-/// A message and sleep timer pair. Once the timer has elapsed and is polled, the message is taken
-/// from the inner option and returned. After that point, the timer should not be polled again.
-#[pin_project]
-#[allow(missing_debug_implementations)]
-pub(crate) struct Timer<T> {
-    #[pin]
-    deadline: Sleep,
-    msg: Option<T>,
-}
-
-impl<T> Timer<T> {
-    pub(crate) fn new(deadline: Instant, msg: T) -> Self {
-        Self {
-            deadline: sleep_until(deadline),
-            msg: Some(msg),
-        }
-    }
-}
-
-impl<T> Future for Timer<T> {
-    type Output = T;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        match this.deadline.poll(cx) {
-            Poll::Ready(()) => Poll::Ready(this.msg.take().unwrap()),
-            Poll::Pending => Poll::Pending,
-        }
     }
 }
