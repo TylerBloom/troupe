@@ -1,5 +1,4 @@
-//! This module contains the compatiablity layer to abstract over different async runtimes and
-//! whether or not the compilation target is native or WASM.
+//! The compatability layer between async runtimes as well as native vs WASM targets.
 
 use std::fmt::Debug;
 

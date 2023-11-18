@@ -18,12 +18,16 @@ pub trait Sendable: 'static + Send {}
 
 impl<T> Sendable for T where T: 'static + Send {}
 
-/// Because `async_trait` requires that trait futures are [`Send`] and the non-`Send` alternative
-/// is worse, both the [`ActorState`](crate::ActorState) and [`Scheduler`](crate::Scheduler) must
-/// be `Send`. This is a problem for WASM. This wrapper provides a uniform interfaces between WASM
-/// and non-WASM targets through which a `Send` workaround can be implemented.
+/// Because [`async_trait`](async_trait::async_trait) requires that trait futures are [`Send`]*,
+/// both the [`ActorState`](crate::ActorState) and [`Scheduler`](crate::Scheduler) must be `Send`.
+/// This can be a problem for WASM, so this wrapper provides a uniform interfaces between WASM and
+/// non-WASM targets through which a `Send` workaround can be implemented.
 ///
 /// For non-WASM targets, this wrapper is a transparent wrapper.
+///
+/// *`async_trait` allows futures to be `!Send`, this can not easily be done based on the
+/// compilation target, and, generally speaking, `!Send` futures are more difficult to work with
+/// that `Send` futures.
 #[derive(Debug)]
 #[pin_project]
 pub struct SendableWrapper<T>(#[pin] T);
@@ -105,7 +109,8 @@ mod tokio {
 
     use super::Sendable;
 
-    /// A wrapper around `tokio::spawn`, which spawns a future that will execute in the background.
+    /// A wrapper around the async runtime which spawns a future that will execute in the
+    /// background.
     pub fn spawn_task<F, T>(fut: F)
     where
         F: SendableFuture<Output = T>,
@@ -114,7 +119,8 @@ mod tokio {
         drop(tokio::spawn(fut));
     }
 
-    /// A future that will sleep for a period of time before waking up.
+    /// A future that will sleep for a period of time before waking up. Created by the
+    /// [`sleep_for`] and [`sleep_until`] fuctions.
     #[pin_project]
     pub struct Sleep(#[pin] tokio::time::Sleep);
 
@@ -150,8 +156,8 @@ mod async_std {
 
     use super::Sendable;
 
-    /// Spawns a future that will execute. The future must return nothing for compatability with the
-    /// WASM version.
+    /// A wrapper around the async runtime which spawns a future that will execute in the
+    /// background.
     pub fn spawn_task<F, T>(fut: F)
     where
         F: SendableFuture<Output = T>,
@@ -160,7 +166,8 @@ mod async_std {
         drop(async_std::task::spawn(fut));
     }
 
-    /// A future that will sleep for a period of time before waking up.
+    /// A future that will sleep for a period of time before waking up. Created by the
+    /// [`sleep_for`] and [`sleep_until`] fuctions.
     pub struct Sleep(Pin<Box<dyn 'static + Send + Future<Output = ()>>>);
 
     impl Future for Sleep {

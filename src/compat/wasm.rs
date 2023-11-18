@@ -21,19 +21,23 @@ pub trait Sendable: 'static {}
 
 impl<T> Sendable for T where T: 'static {}
 
-/// Because `async_trait` requires that trait futures are [`Send`] and the non-`Send` alternative
-/// is worse, both the [`ActorState`](crate::Scheduler) and [`Scheduler`](crate::Scheduler) must be
-/// `Send`. This is a problem for WASM. This wrapper provides a uniform interfaces between WASM and
+/// Because [`async_trait`](async_trait::async_trait) requires that trait futures are [`Send`]*,
+/// both the [`ActorState`](crate::ActorState) and [`Scheduler`](crate::Scheduler) must be `Send`.
+/// This can be a problem for WASM, so this wrapper provides a uniform interfaces between WASM and
 /// non-WASM targets through which a `Send` workaround can be implemented.
 ///
 /// For WASM targets, this wrapper is just [`SendWrapper`]. This is completely safe to use as WASM
 /// applications are strictly bound to a single thread, so this wrapper will never panic.
+///
+/// *`async_trait` allows futures to be `!Send`, this can not easily be done based on the
+/// compilation target, and, generally speaking, `!Send` futures are more difficult to work with
+/// that `Send` futures.
 pub type SendableWrapper<T> = SendWrapper<T>;
 
 /* ------ General Utils ------ */
 
 /// A wrapper around `wasm-bindgen-future`'s `spawn_local` function, which spawns a future tha
-/// will execute in the background
+/// will execute in the background.
 pub(crate) fn spawn_task<F, T>(fut: F)
 where
     F: SendableFuture<Output = T>,
@@ -42,7 +46,8 @@ where
     wasm_bindgen_futures::spawn_local(fut.map(drop));
 }
 
-/// A future that will sleep for a period of time before waking up.
+/// A future that will sleep for a period of time before waking up. Created by the
+/// [`sleep_for`] and [`sleep_until`] fuctions.
 pub struct Sleep(TimeoutFuture);
 
 impl Future for Sleep {

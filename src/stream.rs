@@ -1,3 +1,5 @@
+//! Actors that broadcast messages.
+
 use std::{
     fmt::Debug,
     pin::Pin,
@@ -12,7 +14,7 @@ use crate::compat::{Sendable, SendableWrapper};
 
 /// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of
 /// [`ActorState`](crate::ActorState) it is dealing with. A stream actor is one that receives
-/// messages from one or streams and then forwards messages to its clients.
+/// messages from one or more streams and then forwards messages to its clients.
 ///
 /// The client of a [`StreamActor`] is the [`StreamClient`]. This client implements methods for
 /// receiving methods that are "forwarded" by the actor. Unlike the
@@ -22,7 +24,7 @@ use crate::compat::{Sendable, SendableWrapper};
 #[derive(Debug)]
 pub struct StreamActor;
 
-/// A client that receives messages from an actor that broadcasts.
+/// A client that receives messages from an actor that broadcasts them.
 #[derive(Debug)]
 pub struct StreamClient<M> {
     recv: BroadcastStream<M>,

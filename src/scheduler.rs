@@ -31,11 +31,12 @@ enum SchedulerStatus {
     MarkedToFinish,
 }
 
-/// The primary bookkeeper for the actor. The state can queue and manage additional futures and
-/// streams with it. The scheduler also tracks if it is possible that another message will be
-/// yielded and processes by the actor. If it finds itself in a state where all streams are closed
+/// The primary bookkeeper for the actor. The state attach stream and queue manage futures that
+/// will be managed by the Scheduler.
+/// The scheduler also tracks if it is possible that no other message will be
+/// yielded for the actor to process. If it finds itself in a state where all streams are closed
 /// and there are no queued futures, it will close the actor; otherwise, the deadlocked actor will
-/// stay in memory during nothing.
+/// stay in memory doing nothing.
 ///
 /// Note: If the scheduler finds that the actor is dead but is also managing futures for it, the
 /// scheduler will spawn a new async task to poll those futures to completion.
@@ -93,7 +94,7 @@ impl<A: ActorState> ActorRunner<A> {
     }
 
     pub(crate) fn add_stream(&mut self, stream: ActorStream<A::Message>) {
-        self.scheduler.add_stream_inner(stream);
+        self.scheduler.attach_stream_inner(stream);
     }
 
     pub(crate) fn launch(self) {
@@ -184,15 +185,16 @@ impl<A: ActorState> Scheduler<A> {
         }
     }
 
-    /// Adds a future to the scheduler that will be managed and polled by the [`Scheduler`]. The
-    /// output from the future must be convertible into a message for the actor to later process.
-    /// If you like the scheduler to just poll and manage the future, see the
-    /// [`manage_future`](Scheduler::manage_future).
+    /// Queues a future in the scheduler that it will manage and poll. The output from the future
+    /// must be convertible into a message for the actor to process. If you'd like the scheduler to
+    /// just manage and poll the future, see the [`manage_future`](Scheduler::manage_future)
+    /// method.
     ///
     /// Note: There is no ordering to the collection of futures. Moreover, there is no ordering
-    /// between the queued futures and queued streams. The first to yield an item is the first to
-    /// be processed. For this reason, the futures queued this way must be `'static`.
-    pub fn add_task<F, I>(&mut self, fut: F)
+    /// between the queued futures and attached streams. The first to yield an item is the first to
+    /// be processed. For this reason, the futures queued this way must be `'static`, i.e. they
+    /// can't reference the actor's state.
+    pub fn queue_task<F, I>(&mut self, fut: F)
     where
         F: Sendable + Future<Output = I>,
         I: 'static + Into<A::Message>,
@@ -204,32 +206,36 @@ impl<A: ActorState> Scheduler<A> {
     /// Adds the given future to an internal queue of futures that the scheduler will manage;
     /// however, anything that the future yields will be dropped immediately. If the item yielded
     /// by the future can be turned into a message for the actor and you would the actor to process
-    /// it, see the [`add_task`](Scheduler::add_task) method.
+    /// it, see the [`queue_task`](Scheduler::queue_task) method.
     ///
     /// Note: Managed futures are polled at the same time as the queued futures that yield messages
-    /// and the queued stream. For this reason, the managed futures must be `'static`.
-    pub fn manage_future<F>(&mut self, fut: F)
+    /// and the attached streams. For this reason, the futures managed this way must be `'static`,
+    /// i.e. they can't reference the actor's state.
+    pub fn manage_future<F, T>(&mut self, fut: F)
     where
-        F: Sendable + Future<Output = ()>,
+        F: Sendable + Future<Output = T>,
+        T: Sendable,
     {
-        self.tasks.push(Box::pin(fut));
+        self.tasks.push(Box::pin(fut.map(drop)));
     }
 
-    /// Adds a stream that will be polled and managed by the scheduler. Messages yielded by the
-    /// streams will be processed by the actor. The given stream must be a [`FusedStream`];
-    /// however, the scheduler will mark a stream as done once it yields its first `None` and will
-    /// never poll that stream again. If you would like to add a non-fused stream.
-    pub fn add_stream<S, I>(&mut self, stream: S)
+    /// Attaches a stream that will be polled and managed by the scheduler. Messages yielded by the
+    /// streams must be able to be converted into the actor's message type so that the actor can
+    /// process it. The given stream must be a [`FusedStream`]; however, the scheduler requires a
+    /// stronger invariant than that given by `FusedStream`. The scheduler will mark a stream as
+    /// "done" once the stream yields its first `None`. After that, the scheduler will never poll
+    /// that stream again.
+    pub fn attach_stream<S, I>(&mut self, stream: S)
     where
         S: SendableStream<Item = I> + FusedStream,
         I: Into<A::Message>,
     {
         let stream = ActorStream::Secondary(Box::new(stream.map(|m| m.into())));
-        self.add_stream_inner(stream)
+        self.attach_stream_inner(stream)
     }
 
     /// Adds an actor stream to the scheduler.
-    fn add_stream_inner(&mut self, stream: ActorStream<A::Message>) {
+    fn attach_stream_inner(&mut self, stream: ActorStream<A::Message>) {
         self.stream_count += 1;
         self.recv.push(stream.fuse());
     }
@@ -237,14 +243,14 @@ impl<A: ActorState> Scheduler<A> {
     /// Schedules a message to be given to the actor to process at a given time.
     pub fn schedule<M>(&mut self, deadline: Instant, msg: M)
     where
-        M: 'static + Into<A::Message>,
+        M: Sendable + Into<A::Message>,
     {
         self.future_count += 1;
         self.queue.push(Box::pin(Timer::new(deadline, msg.into())));
     }
 
-    /// Broadcasts a message to all listening clients. If the message fails to send, the msg will
-    /// be dropped.
+    /// Broadcasts a message to all listening clients. If the message fails to send, the message
+    /// will be dropped.
     ///
     /// Note: This method does nothing if the actor is a [`SinkActor`](crate::sink::SinkActor).
     /// [`StreamActor`](crate::stream::StreamActor)s and [`JointActor`](crate::joint::JointActor)
@@ -264,20 +270,20 @@ where
     A: ActorState<Permanence = Transient>,
 {
     /// Marks the actor as ready to shutdown. After the state finishes processing the current
-    /// message, it will shutdown the actor processes. Any unprocessed messages will be dropped,
-    /// all attached streams will be closed, all futures that will yield a message are
-    /// cancelled, and all managed futures will dropped. If you would like the managed futures
-    /// (non-message) futures to be processed still, use the
-    /// [`shutdown_and_finish`](Scheduler::shutdown_and_finish) method instead.
+    /// message, actor process will shutdown. Any unprocessed messages will be dropped, all
+    /// attached streams will be closed, all futures that will yield a message will be cancelled,
+    /// and all managed futures will dropped. If you would like the managed (non-message) futures
+    /// to be processed, use the [`shutdown_and_finish`](Scheduler::shutdown_and_finish) method
+    /// instead.
     pub fn shutdown(&mut self) {
         self.status = SchedulerStatus::Marked;
     }
 
     /// Marks the actor as ready to shutdown. After the state finishes processing the current
     /// message, it will shutdown the actor processes. Any unprocessed messages will be dropped,
-    /// all attached streams will be closed, all futures that will yield a message are cancelled,
-    /// but all managed futures will be polled to completion in a new async process. If you would
-    /// for all managed futures and streams to be dropped instead, use the
+    /// all attached streams will be closed, all futures that will yield a message will be
+    /// cancelled, but all managed futures will be polled to completion in a new async process. If
+    /// you would like for the managed futures and streams to be dropped instead, use the
     /// [`shutdown`](Scheduler::shutdown) method.
     pub fn shutdown_and_finish(&mut self) {
         self.status = SchedulerStatus::MarkedToFinish;
@@ -306,7 +312,7 @@ impl<M: Sendable> Stream for ActorStream<M> {
     }
 }
 
-/// A simple function to poll a stream until it is closed. Largely when the scheduler closes.
+/// A simple function to poll a stream until it is closed. Largely used when the scheduler closes.
 async fn poll_to_completion<S>(mut stream: S)
 where
     S: SendableFusedStream,

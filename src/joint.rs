@@ -1,3 +1,5 @@
+//! Actors that both can be sent messages and broadcast messages.
+
 use std::{
     pin::Pin,
     task::{Context, Poll},
@@ -15,13 +17,15 @@ use crate::{
 
 use crate::OneshotSender;
 
-/// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of [`ActorState`](crate::ActorState) it is dealing
-/// with. A joint actor is one that acts as both a [`SinkActor`](crate::sink::SinkActor) and a [`StreamActor`](crate::stream::StreamActor). Its clients
-/// can both send messages into the actor and recieve messages forwarded by the actor.
+/// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of
+/// [`ActorState`](crate::ActorState) it is dealing with. A joint actor is one that acts as both a
+/// [`SinkActor`](crate::sink::SinkActor) and a [`StreamActor`](crate::stream::StreamActor). Its
+/// clients, [`JointClient`]s, can both send messages into the actor and recieve messages forwarded
+/// by the actor.
 #[derive(Debug)]
 pub struct JointActor;
 
-/// A client to an actor. This client is a combination of the ['SinkClient`] and the
+/// A client to an actor. This client is a combination of the [`SinkClient`] and the
 /// [`StreamClient`].
 #[pin_project]
 #[derive(Debug)]
@@ -71,12 +75,13 @@ impl<T, I, O: Sendable + Clone> JointClient<T, I, O> {
 impl<I, O> JointClient<Permanent, I, O> {
     /// Sends a request-response style message to a [`Permanent`] actor. The given data is paired
     /// with a one-time use channel and sent to the actor. A
-    /// [`Tracker`](crate::sink::permanent::Tracker) that will receive a
-    /// response from the actor is returned.
+    /// [`Tracker`](crate::sink::permanent::Tracker) that will receive a response from the actor is
+    /// returned.
     ///
     /// Note: Since this client is one for a permanent actor, there is an implicit unwrap once the
     /// tracker receives a message from the actor. If the actor drops the other half of the channel
-    /// or has died somehow (likely from a panic), the returned tracker will panic too.
+    /// or has died somehow (likely from a panic), the returned tracker will panic too. So, it is
+    /// important that the actor always sends back a message
     pub fn track<M, R>(&self, msg: M) -> sink::permanent::Tracker<R>
     where
         I: From<(M, OneshotSender<R>)>,
@@ -86,9 +91,10 @@ impl<I, O> JointClient<Permanent, I, O> {
 }
 
 impl<I, O> JointClient<Transient, I, O> {
-    /// Sends a request-response style message to a [`Transient`] actor.
-    /// The given data is paired with a one-time use channel and sent to the actor.
-    /// A [`Tracker`](crate::sink::transient::Tracker) that will receive a response from the actor is returned.
+    /// Sends a request-response style message to a [`Transient`] actor. The given data is paired
+    /// with a one-time use channel and sent to the actor. A
+    /// [`Tracker`](crate::sink::transient::Tracker) that will receive a response from the actor is
+    /// returned.
     pub fn track<M, R>(&self, msg: M) -> sink::transient::Tracker<R>
     where
         I: From<(M, OneshotSender<R>)>,

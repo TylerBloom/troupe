@@ -134,6 +134,9 @@ If there are certain patterns that are commonplace, a general version of that pa
 One such example is something like a local-first buffered state.
 Here, you have some data that exists in two locations, say client and server, and you want update the state in one location then propagate those changes elsewhere.
 
+Another possible actor pattern in a "poll" actor.
+This would build upon a broadcast actor, but the broadcast message would contain a oneshot channel for communicating a "vote" with the actor.
+
 
 # Usage and Licensing
 This project is currently licensed under a LGPL-2.1 license.

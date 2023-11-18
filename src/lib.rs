@@ -6,28 +6,31 @@
 //! - A model that can be adopted into an existing project all at once or over time
 //! - An ergonomic API devoid of magic
 //!
-//! At the core of every actor is an [`ActorState`]. These are the building blocks of modeling your
-//! program with `troupe`. This state is fully isolated from the rest of your application and can
-//! only be reached by attaching a stream of inbound messages. For many actors, this stream is
-//! provided by `troupe` in the form of an [`mpsc-style`](tokio::sync::mpsc) tokio channel. All
-//! inbound streams are managed by the [`Scheduler`]. The state can add new streams of messages,
-//! queue futures that yield message, or hand off futures that yield nothing to the scheduler.
+//! At the core of every actor is an [`ActorState`]. These are the building blocks used to model
+//! your program with `troupe`. This state is fully isolated from the rest of your application and
+//! can only be reached by attaching a stream of messages. For many actors, a stream is provided by
+//! `troupe` in the form of an [`mpsc-style`](tokio::sync::mpsc) tokio channel. All attached
+//! streams are managed by a [`Scheduler`]. The state can attach new streams, queue futures that
+//! yield message, or hand off futures that yield nothing to the scheduler.
 //!
-//! Communication from/to an actor is managed by a client. Each actor state defines how its
+//! Communication to and from an actor is managed by a client. Each actor state defines how its
 //! clients should function via the [`ActorState`]'s `ActorType`. Conceptually, every actor is
-//! either a `Stream` or `Sink` (or both). An actor that largely receive messages from other parts
-//! of our application is a [`SinkActor`], which use [`SinkClient`]s. An actor that recieves
-//! messages from a different type of stream (for example a Websocket) and then broadcast these
-//! messages is a [`StreamActor`], which use [`StreamClient`]s. If an actor does both of these, it
-//! is a [`JointActor`] and uses [`JointClient`]s.
+//! either something that consumes messages, i.e. a `Sink`, or something to broadcasts messages,
+//! i.e. a `Stream`, or both. An actor that largely receive messages from other parts of our
+//! program is a [`SinkActor`], which use [`SinkClient`]s. An actor that processes messages from a
+//! source (for example a Websocket) and then broadcast these messages is a [`StreamActor`], which
+//! use [`StreamClient`]s. If an actor does both of these, it is a [`JointActor`] and uses
+//! [`JointClient`]s.
 //!
-//! Troupe currently supports three async runtimes: tokio, async-std, and the runtime provided by
-//! the browser (via wasm-bindgen-futures).
+//! Troupe currently supports three async runtimes: `tokio`, `async-std`, and the runtime provided by
+//! the browser (via wasm-bindgen-futures). Do note that even if you are using the `async-std`
+//! runtime, client-actor communication is still done via tokio channels.
 
 #![warn(rust_2018_idioms)]
 #![deny(
     missing_docs,
     rustdoc::broken_intra_doc_links,
+    rustdoc::invalid_rust_codeblocks,
     missing_debug_implementations,
     unreachable_pub,
     unreachable_patterns,
@@ -43,17 +46,11 @@
     clippy::all
 )]
 
-/// The compatability layer between async runtimes as well as native vs WASM targets.
 pub mod compat;
-/// Actors that both can be sent messages and broadcast messages.
 pub mod joint;
-/// Re-exports of commonly used items.
 pub mod prelude;
 pub(crate) mod scheduler;
-/// Actors that are only sent messages (either fire-and-forget messages or request-response
-/// messages).
 pub mod sink;
-/// Actors that broadcast messages.
 pub mod stream;
 
 pub use async_trait::async_trait;
@@ -75,11 +72,9 @@ use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedSender},
 };
 
-// This state needs to be send because of constraints of `async_trait`. Ideally, it would be
-// `Sendable`.
 /// The core abstraction of the actor model. An [`ActorState`] sits at the heart of every actor. It
-/// processes messages, queues futures and streams in the [`Scheduler`] that yield messages, and it
-/// can forward messages. Actors serves two roles. They can act similarly to a
+/// processes messages, queues futures, and attaches streams in the [`Scheduler`], and it can
+/// forward messages. Actors serves two roles. They can act similarly to a
 /// [`Sink`](futures::Sink) where other parts of your application (including other actors) since
 /// messages into the actor. They can also act as a [`Stream`](futures::Stream) that generate
 /// messages to be sent throughout your application. This role is denoted by the actor's
@@ -93,7 +88,8 @@ pub trait ActorState: 'static + Send + Sized {
     type ActorType;
 
     /// This type should either be [`Permanent`] or [`Transient`]. This type is mostly a marker
-    /// type to inform the actor's client(s).
+    /// type to inform the actor's client(s) if it should expect the actor to shutdown at any
+    /// point.
     type Permanence;
 
     /// Inbound messages to the actor must be this type. Clients will send the actor messages of
@@ -106,16 +102,16 @@ pub trait ActorState: 'static + Send + Sized {
     type Output: Sendable + Clone;
 
     /// Before starting the main loop of running the actor, this method is called to finalize any
-    /// setup of the actor state. No inbound messages will be processed until this method is
-    /// completed.
+    /// setup of the actor state, such as pulling data from a database or from over the network. No
+    /// inbound messages will be processed until this method is completed.
     #[allow(unused_variables)]
     async fn start_up(&mut self, scheduler: &mut Scheduler<Self>) {}
 
-    /// The heart of the actor. This method consumes messages from clients and queued futures and
-    /// streams. For [`SinkActor`]s and [`JointActor`]s, the state "responds" to messages with a
-    /// [`OneshotChannel`](tokio::sync::oneshot::channel). The state can also queue futures and
-    /// streams in the [`Scheduler`]. Finally, for [`StreamActor`]s and [`JointActor`]s, any
-    /// messages to forwarded can be queued in the [`Scheduler`].
+    /// The heart of the actor. This method consumes messages attached streams and queued futures
+    /// and streams. For [`SinkActor`]s and [`JointActor`]s, the state can "respond" to messages
+    /// containing a [`OneshotChannel`](tokio::sync::oneshot::channel) sender. The state can also
+    /// queue futures and attach streams in the [`Scheduler`]. Finally, for [`StreamActor`]s and
+    /// [`JointActor`]s, the state can broadcast messages via [`Scheduler`].
     async fn process(&mut self, scheduler: &mut Scheduler<Self>, msg: Self::Message);
 
     /// Once the actor has died, this method is called to allow the actor to clean up anything that
@@ -139,9 +135,9 @@ pub struct Permanent;
 #[derive(Debug)]
 pub struct Transient;
 
-/// Holds a type that implements [`ActorState`], helps aggregate all data needed by the actor, and
-/// then launches the actor process. When the actor process is launched, a client is returned to
-/// the caller. This client's type depends on the actor's type.
+/// Holds a type that implements [`ActorState`], helps aggregate all data that the actor needs, and
+/// then launches the async actor process. When the actor process is launched, a client is returned
+/// to the caller. This client's type depends on the actor's type.
 #[allow(missing_debug_implementations)]
 pub struct ActorBuilder<T, A: ActorState> {
     /// The type of actor that is being built. This is the same as `A::ActorType` but
@@ -177,7 +173,7 @@ where
 
     /// Attaches a stream that will be used by the actor once its spawned. No messages will be
     /// processed until after the actor is launched.
-    pub fn add_stream<S, I>(&mut self, stream: S)
+    pub fn attach_stream<S, I>(&mut self, stream: S)
     where
         S: SendableFusedStream<Item = I>,
         I: Into<A::Message>,
@@ -225,7 +221,7 @@ where
         StreamClient::new(broad.resubscribe())
     }
 
-    /// Launches an actor that uses the given state and stream and returns a client to the actor.
+    /// Launches an actor that uses the given state. Returns a client to the actor.
     pub fn launch<S>(self, stream: S) -> StreamClient<A::Output>
     where
         S: SendableFusedStream<Item = A::Message>,
@@ -251,8 +247,8 @@ impl<A> ActorBuilder<JointActor, A>
 where
     A: ActorState<ActorType = JointActor>,
 {
-    /// Returns a client for the actor that will be spawned. The client will not yield any messages
-    /// until after the actor is launched and has sent a message.
+    /// Returns a stream client for the actor that will be spawned. The client will not yield any
+    /// messages until after the actor is launched and has sent a message.
     pub fn stream_client(&self) -> StreamClient<A::Output> {
         StreamClient::new(self.broadcast.as_ref().unwrap().1.resubscribe())
     }
@@ -272,7 +268,7 @@ where
         SinkClient::new(self.send.clone())
     }
 
-    /// Launches an actor that uses the given state and stream and returns a client to the actor.
+    /// Launches an actor that uses the given state and stream. Returns a client to the actor.
     pub fn launch_with_stream<S>(
         mut self,
         stream: S,
@@ -280,11 +276,11 @@ where
     where
         S: SendableFusedStream<Item = A::Message>,
     {
-        self.add_stream(stream);
+        self.attach_stream(stream);
         self.launch()
     }
 
-    /// Launches an actor that uses the given state and returns a client to the actor.
+    /// Launches an actor that uses the given state. Returns a client to the actor.
     pub fn launch(self) -> JointClient<A::Permanence, A::Message, A::Output> {
         let Self {
             send,

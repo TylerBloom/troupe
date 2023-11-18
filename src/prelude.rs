@@ -1,3 +1,5 @@
+//! Re-exports of commonly used items.
+
 pub use crate::{
     async_trait,
     joint::{JointActor, JointClient},
