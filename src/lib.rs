@@ -53,7 +53,7 @@ pub(crate) mod scheduler;
 pub mod sink;
 pub mod stream;
 
-use compat::{Sendable, SendableAnyMap, SendableFusedStream, SendableFuture, SendableWrapper};
+use compat::{Sendable, SendableAnyMap, SendableFusedStream, SendableFuture};
 use joint::{JointActor, JointClient};
 pub use scheduler::Scheduler;
 use scheduler::{ActorRunner, ActorStream};
@@ -152,10 +152,7 @@ pub struct ActorBuilder<T, A: ActorState> {
     send: UnboundedSender<A::Message>,
     edges: SendableAnyMap,
     #[allow(clippy::type_complexity)]
-    broadcast: Option<(
-        broadcast::Sender<SendableWrapper<A::Output>>,
-        broadcast::Receiver<SendableWrapper<A::Output>>,
-    )>,
+    broadcast: Option<(broadcast::Sender<A::Output>, broadcast::Receiver<A::Output>)>,
     recv: Vec<ActorStream<A::Message>>,
     state: A,
 }
