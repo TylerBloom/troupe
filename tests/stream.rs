@@ -98,19 +98,23 @@ struct Counter {
     count: usize,
 }
 
-#[async_trait]
 impl ActorState for Counter {
     type ActorType = StreamActor;
     type Permanence = Transient;
     type Message = ();
     type Output = usize;
 
-    async fn start_up(&mut self, scheduler: &mut Scheduler<Self>) {
+    fn start_up(&mut self, scheduler: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
         self.started.take().unwrap().send(Started).unwrap();
         scheduler.schedule(Instant::now() + Duration::from_millis(5), ());
+        std::future::ready(())
     }
 
-    async fn process(&mut self, scheduler: &mut Scheduler<Self>, (): Self::Message) {
+    fn process(
+        &mut self,
+        scheduler: &mut Scheduler<Self>,
+        (): Self::Message,
+    ) -> impl SendableFuture<Output = ()> {
         println!("Processing message!!");
         let next = self.count + 1;
         scheduler.broadcast(std::mem::replace(&mut self.count, next));
@@ -118,10 +122,12 @@ impl ActorState for Counter {
         if self.count > 10 {
             scheduler.shutdown();
         }
+        std::future::ready(())
     }
 
-    async fn finalize(self, _: &mut Scheduler<Self>) {
+    fn finalize(self, _: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
         self.completed.send(Completed).unwrap();
+        std::future::ready(())
     }
 }
 
