@@ -53,7 +53,7 @@ pub(crate) mod scheduler;
 pub mod sink;
 pub mod stream;
 
-use compat::{Sendable, SendableFusedStream, SendableFuture, SendableWrapper};
+use compat::{Sendable, SendableFusedStream, SendableFuture};
 use joint::{JointActor, JointClient};
 pub use scheduler::Scheduler;
 use scheduler::{ActorRunner, ActorStream};
@@ -151,10 +151,7 @@ pub struct ActorBuilder<T, A: ActorState> {
     ty: PhantomData<T>,
     send: UnboundedSender<A::Message>,
     #[allow(clippy::type_complexity)]
-    broadcast: Option<(
-        broadcast::Sender<SendableWrapper<A::Output>>,
-        broadcast::Receiver<SendableWrapper<A::Output>>,
-    )>,
+    broadcast: Option<(broadcast::Sender<A::Output>, broadcast::Receiver<A::Output>)>,
     recv: Vec<ActorStream<A::Message>>,
     state: A,
 }

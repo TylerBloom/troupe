@@ -16,7 +16,7 @@ use std::{
 use crate::{
     compat::{
         sleep_until, spawn_task, Sendable, SendableFusedStream, SendableFuture, SendableStream,
-        SendableWrapper, Sleep,
+        Sleep,
     },
     ActorState, Transient,
 };
@@ -63,16 +63,16 @@ pub struct Scheduler<A: ActorState> {
 }
 
 struct OutboundQueue<M> {
-    send: broadcast::Sender<SendableWrapper<M>>,
+    send: broadcast::Sender<M>,
 }
 
 impl<M: Sendable + Clone> OutboundQueue<M> {
-    fn new(send: broadcast::Sender<SendableWrapper<M>>) -> Self {
+    fn new(send: broadcast::Sender<M>) -> Self {
         Self { send }
     }
 
     fn send(&mut self, msg: M) {
-        let _ = self.send.send(SendableWrapper::new(msg));
+        let _ = self.send.send(msg);
     }
 }
 
@@ -89,7 +89,7 @@ impl<A: ActorState> ActorRunner<A> {
         Self { state, scheduler }
     }
 
-    pub(crate) fn add_broadcaster(&mut self, broad: broadcast::Sender<SendableWrapper<A::Output>>) {
+    pub(crate) fn add_broadcaster(&mut self, broad: broadcast::Sender<A::Output>) {
         self.scheduler.outbound = Some(OutboundQueue::new(broad));
     }
 

@@ -21,19 +21,6 @@ pub trait Sendable: 'static {}
 
 impl<T> Sendable for T where T: 'static {}
 
-/// Because [`async_trait`](async_trait::async_trait) requires that trait futures are [`Send`]*,
-/// both the [`ActorState`](crate::ActorState) and [`Scheduler`](crate::Scheduler) must be `Send`.
-/// This can be a problem for WASM, so this wrapper provides a uniform interfaces between WASM and
-/// non-WASM targets through which a `Send` workaround can be implemented.
-///
-/// For WASM targets, this wrapper is just [`SendWrapper`]. This is completely safe to use as WASM
-/// applications are strictly bound to a single thread, so this wrapper will never panic.
-///
-/// *`async_trait` allows futures to be `!Send`, this can not easily be done based on the
-/// compilation target, and, generally speaking, `!Send` futures are more difficult to work with
-/// that `Send` futures.
-pub type SendableWrapper<T> = SendWrapper<T>;
-
 /* ------ General Utils ------ */
 
 /// A wrapper around `wasm-bindgen-future`'s `spawn_local` function, which spawns a future tha
