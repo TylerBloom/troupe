@@ -10,7 +10,7 @@ use futures::{ready, Stream, StreamExt};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
-use crate::compat::{Sendable, SendableWrapper};
+use crate::compat::Sendable;
 
 /// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of
 /// [`ActorState`](crate::ActorState) it is dealing with. A stream actor is one that receives
@@ -35,16 +35,16 @@ pub struct StreamClient<M> {
 /// receiver.
 struct BroadcastStream<M> {
     /// A copy of the original channel, used for cloning the client.
-    copy: broadcast::Receiver<SendableWrapper<M>>,
+    copy: broadcast::Receiver<M>,
     /// The stream that is polled.
-    inner: tokio_stream::wrappers::BroadcastStream<SendableWrapper<M>>,
+    inner: tokio_stream::wrappers::BroadcastStream<M>,
 }
 
 impl<M> StreamClient<M>
 where
     M: Sendable + Clone,
 {
-    pub(crate) fn new(recv: broadcast::Receiver<SendableWrapper<M>>) -> Self {
+    pub(crate) fn new(recv: broadcast::Receiver<M>) -> Self {
         Self {
             recv: BroadcastStream::new(recv),
         }
@@ -55,7 +55,7 @@ impl<M> BroadcastStream<M>
 where
     M: Sendable + Clone,
 {
-    fn new(stream: broadcast::Receiver<SendableWrapper<M>>) -> Self {
+    fn new(stream: broadcast::Receiver<M>) -> Self {
         let copy = stream.resubscribe();
         let inner = tokio_stream::wrappers::BroadcastStream::new(stream);
         Self { copy, inner }
@@ -93,7 +93,7 @@ where
         let done = ready!(self.inner.poll_next_unpin(cx));
         drop(self.copy.try_recv());
         match done {
-            Some(Ok(val)) => Poll::Ready(Some(Ok(val.take()))),
+            Some(Ok(val)) => Poll::Ready(Some(Ok(val))),
             Some(Err(BroadcastStreamRecvError::Lagged(count))) => Poll::Ready(Some(Err(count))),
             None => Poll::Ready(None),
         }

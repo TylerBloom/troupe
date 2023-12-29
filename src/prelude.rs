@@ -1,7 +1,7 @@
 //! Re-exports of commonly used items.
 
 pub use crate::{
-    async_trait,
+    compat::SendableFuture,
     joint::{JointActor, JointClient},
     oneshot_channel,
     scheduler::Scheduler,
