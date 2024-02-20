@@ -6,6 +6,9 @@ use std::{
     task::{Context, Poll},
 };
 
+#[cfg(target_family = "wasm")]
+use send_wrapper::SendWrapper;
+
 use futures::{ready, Stream, StreamExt};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
@@ -37,6 +40,9 @@ struct BroadcastStream<M> {
     /// A copy of the original channel, used for cloning the client.
     copy: broadcast::Receiver<M>,
     /// The stream that is polled.
+    #[cfg(target_family = "wasm")]
+    inner: tokio_stream::wrappers::BroadcastStream<SendWrapper<M>>,
+    #[cfg(not(target_family = "wasm"))]
     inner: tokio_stream::wrappers::BroadcastStream<M>,
 }
 
@@ -55,8 +61,15 @@ impl<M> BroadcastStream<M>
 where
     M: Sendable + Clone,
 {
+    // FIXME: This won't compile because BroadcastStream requires that the objects be Send + Clone.
+    // The solution is to wrap each item in a SendWrapper and then unwrap them before giving them
+    // to the caller. All of this is obscurred from the caller, so it will not cause breaking
+    // changes.
     fn new(stream: broadcast::Receiver<M>) -> Self {
         let copy = stream.resubscribe();
+        #[cfg(target_family = "wasm")]
+        let inner = tokio_stream::wrappers::BroadcastStream::new(SendWrapper::new(stream));
+        #[cfg(not(target_family = "wasm"))]
         let inner = tokio_stream::wrappers::BroadcastStream::new(stream);
         Self { copy, inner }
     }

@@ -9,7 +9,6 @@ use std::{
 };
 
 use super::SendableFuture;
-use send_wrapper::SendWrapper;
 
 /* ------ Send workarounds ------ */
 
