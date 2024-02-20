@@ -18,6 +18,12 @@ targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 [features]
 default = ["tokio"]
 
+full_ensemble = ["panic_catcher", "manager", "self_sharding"]
+
+panic_catcher = []
+self_sharding = []
+manager = []
+
 [dependencies]
 tokio = { version = "1.33", features = ["sync", "macros"] }
 tokio-stream = { version = "0.1", features = ["sync"] }

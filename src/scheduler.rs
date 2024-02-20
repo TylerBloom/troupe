@@ -23,6 +23,17 @@ use crate::{
 
 type FuturesCollection<T> = FuturesUnordered<Pin<Box<dyn SendableFuture<Output = T>>>>;
 
+pub struct SchedulerBuffer<M, O> {
+    /// The inbound streams to the actor.
+    recv: Vec<ActorStream<M>>,
+    /// Futures that the actor has queued that will yield a message.
+    queue: SendableWrapper<FuturesCollection<M>>,
+    /// Futures that yield nothing that the scheduler will manage and poll for the actor.
+    tasks: SendableWrapper<FuturesCollection<()>>,
+    /// The manager for outbound messages that will be broadcast from the actor.
+    outbound: Option<SendableWrapper<OutboundQueue<O>>>,
+}
+
 /// Encapulates the different states a scheduler can be. Largely used to communicate how a state
 /// wishes to shutdown.
 enum SchedulerStatus {
@@ -41,15 +52,15 @@ enum SchedulerStatus {
 /// Note: If the scheduler finds that the actor is dead but is also managing futures for it, the
 /// scheduler will spawn a new async task to poll those futures to completion.
 #[allow(missing_debug_implementations)]
-pub struct Scheduler<A: ActorState> {
+pub struct Scheduler<M, O> {
     /// The inbound streams to the actor.
-    recv: SendableWrapper<SelectAll<Fuse<ActorStream<A::Message>>>>,
+    recv: SendableWrapper<SelectAll<Fuse<ActorStream<M>>>>,
     /// Futures that the actor has queued that will yield a message.
-    queue: SendableWrapper<FuturesCollection<A::Message>>,
+    queue: SendableWrapper<FuturesCollection<M>>,
     /// Futures that yield nothing that the scheduler will manage and poll for the actor.
     tasks: SendableWrapper<FuturesCollection<()>>,
     /// The manager for outbound messages that will be broadcast from the actor.
-    outbound: Option<SendableWrapper<OutboundQueue<A::Output>>>,
+    outbound: Option<SendableWrapper<OutboundQueue<O>>>,
     /// The number of stream that could yield a message for the actor to process. Once this and the
     /// `future_count` hit both reach zero, the actor is dead as it can no longer process any
     /// messages.
@@ -80,7 +91,7 @@ impl<M: Sendable + Clone> OutboundQueue<M> {
 /// bookkeeping if the actor is dead or not, and passes messages off to the state.
 pub(crate) struct ActorRunner<A: ActorState> {
     state: A,
-    scheduler: Scheduler<A>,
+    scheduler: Scheduler<A::Message, A::Output>,
 }
 
 impl<A: ActorState> ActorRunner<A> {
@@ -122,7 +133,11 @@ impl<A: ActorState> ActorRunner<A> {
     }
 }
 
-impl<A: ActorState> Scheduler<A> {
+impl<M, O> Scheduler<M, O>
+where
+    M: Sendable,
+    O: Sendable + Clone,
+{
     /// The constructor for the scheduler.
     fn new() -> Self {
         let recv = SendableWrapper::new(select_all([]));
@@ -265,9 +280,10 @@ impl<A: ActorState> Scheduler<A> {
     }
 }
 
-impl<A> Scheduler<A>
+impl<M, O> Scheduler<M, O>
 where
-    A: ActorState<Permanence = Transient>,
+    M: Sendable,
+    O: Sendable + Clone,
 {
     /// Marks the actor as ready to shutdown. After the state finishes processing the current
     /// message, actor process will shutdown. Any unprocessed messages will be dropped, all

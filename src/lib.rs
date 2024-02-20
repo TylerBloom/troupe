@@ -46,12 +46,17 @@
     clippy::all
 )]
 
+// TODO:
+// Codify connections between different actors
+// Determine if a larger runtime is needed or not
+
 pub mod compat;
 pub mod joint;
 pub mod prelude;
 pub(crate) mod scheduler;
 pub mod sink;
 pub mod stream;
+pub mod ensemble;
 
 pub use async_trait::async_trait;
 use compat::{Sendable, SendableFusedStream, SendableWrapper};
@@ -105,20 +110,20 @@ pub trait ActorState: 'static + Send + Sized {
     /// setup of the actor state, such as pulling data from a database or from over the network. No
     /// inbound messages will be processed until this method is completed.
     #[allow(unused_variables)]
-    async fn start_up(&mut self, scheduler: &mut Scheduler<Self>) {}
+    async fn start_up(&mut self, scheduler: &mut Scheduler<Self::Message, Self::Output>) {}
 
     /// The heart of the actor. This method consumes messages attached streams and queued futures
     /// and streams. For [`SinkActor`]s and [`JointActor`]s, the state can "respond" to messages
     /// containing a [`OneshotChannel`](tokio::sync::oneshot::channel) sender. The state can also
     /// queue futures and attach streams in the [`Scheduler`]. Finally, for [`StreamActor`]s and
     /// [`JointActor`]s, the state can broadcast messages via [`Scheduler`].
-    async fn process(&mut self, scheduler: &mut Scheduler<Self>, msg: Self::Message);
+    async fn process(&mut self, scheduler: &mut Scheduler<Self::Message, Self::Output>, msg: Self::Message);
 
     /// Once the actor has died, this method is called to allow the actor to clean up anything that
     /// remains. Note that this method is also called even for [`Permanent`] actors that have
     /// expired.
     #[allow(unused_variables)]
-    async fn finalize(self, scheduler: &mut Scheduler<Self>) {}
+    async fn finalize(self, scheduler: &mut Scheduler<Self::Message, Self::Output>) {}
 }
 
 /// A marker type used in the [`ActorState`]. It communicates that the actor should never die. As
