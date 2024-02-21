@@ -54,7 +54,7 @@ pub mod sink;
 pub mod stream;
 
 pub use async_trait::async_trait;
-use compat::{Sendable, SendableFusedStream, SendableWrapper};
+use compat::{Sendable, SendableAnyMap, SendableFusedStream, SendableWrapper};
 use joint::{JointActor, JointClient};
 pub use scheduler::Scheduler;
 use scheduler::{ActorRunner, ActorStream};
@@ -144,6 +144,7 @@ pub struct ActorBuilder<T, A: ActorState> {
     /// specialization is not yet supported.
     ty: PhantomData<T>,
     send: UnboundedSender<A::Message>,
+    edges: SendableAnyMap,
     #[allow(clippy::type_complexity)]
     broadcast: Option<(
         broadcast::Sender<SendableWrapper<A::Output>>,
@@ -168,6 +169,7 @@ where
             recv,
             broadcast: None,
             ty: PhantomData,
+            edges: SendableAnyMap::new(),
         }
     }
 
@@ -180,6 +182,19 @@ where
     {
         self.recv
             .push(ActorStream::Secondary(Box::new(stream.map(|m| m.into()))));
+    }
+
+    /// Adds a client to the builder, which the state can access later.
+    pub fn add_edge<P: 'static + Send, M: 'static + Send>(&mut self, client: SinkClient<P, M>) {
+        _ = self.edges.insert(client);
+    }
+
+    /// Adds an arbitrary data to the builder, which the state can access later. This method is
+    /// intended to be used with containers hold that multiple clients of the same type.
+    ///
+    /// For example, you can attach a series of actor clients that are indexed using a hashmap.
+    pub fn add_multi_edge<C: 'static + Send>(&mut self, container: C) {
+        _ = self.edges.insert(container);
     }
 }
 
@@ -198,9 +213,13 @@ where
     /// Launches an actor that uses the given state and returns a client to the actor.
     pub fn launch(self) -> SinkClient<A::Permanence, A::Message> {
         let Self {
-            send, recv, state, ..
+            send,
+            recv,
+            state,
+            edges,
+            ..
         } = self;
-        let mut runner = ActorRunner::new(state);
+        let mut runner = ActorRunner::new(state, edges);
         recv.into_iter().for_each(|r| runner.add_stream(r));
         runner.launch();
         SinkClient::new(send)
@@ -230,11 +249,12 @@ where
             mut recv,
             state,
             broadcast,
+            edges,
             ..
         } = self;
         let (broad, sub) = broadcast.unwrap_or_else(|| broadcast::channel(100));
         recv.push(ActorStream::Secondary(Box::new(stream)));
-        let mut runner = ActorRunner::new(state);
+        let mut runner = ActorRunner::new(state, edges);
         runner.add_broadcaster(broad);
         recv.into_iter().for_each(|r| runner.add_stream(r));
         runner.launch();
@@ -287,10 +307,11 @@ where
             recv,
             state,
             broadcast,
+            edges,
             ..
         } = self;
         let (broad, sub) = broadcast.unwrap_or_else(|| broadcast::channel(100));
-        let mut runner = ActorRunner::new(state);
+        let mut runner = ActorRunner::new(state, edges);
         recv.into_iter().for_each(|r| runner.add_stream(r));
         runner.add_broadcaster(broad);
         runner.launch();

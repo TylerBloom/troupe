@@ -15,9 +15,10 @@ use std::{
 
 use crate::{
     compat::{
-        sleep_until, spawn_task, Sendable, SendableFusedStream, SendableFuture, SendableStream,
-        SendableWrapper, Sleep,
+        sleep_until, spawn_task, Sendable, SendableAnyMap, SendableFusedStream, SendableFuture,
+        SendableStream, SendableWrapper, Sleep,
     },
+    sink::SinkClient,
     ActorState, Transient,
 };
 
@@ -50,6 +51,9 @@ pub struct Scheduler<A: ActorState> {
     tasks: SendableWrapper<FuturesCollection<()>>,
     /// The manager for outbound messages that will be broadcast from the actor.
     outbound: Option<SendableWrapper<OutboundQueue<A::Output>>>,
+    /// Stores edges in the form of `EdgeType`s. This is used to access connections to other actors
+    /// at runtime without needing to embed them into the actor state directly.
+    edges: SendableAnyMap,
     /// The number of stream that could yield a message for the actor to process. Once this and the
     /// `future_count` hit both reach zero, the actor is dead as it can no longer process any
     /// messages.
@@ -84,9 +88,9 @@ pub(crate) struct ActorRunner<A: ActorState> {
 }
 
 impl<A: ActorState> ActorRunner<A> {
-    pub(crate) fn new(state: A) -> Self {
-        let scheduler = Scheduler::new();
-        Self { state, scheduler }
+    pub(crate) fn new(state: A, edges: SendableAnyMap) -> Self {
+        let scheduler = Scheduler::new(edges);
+        Self { scheduler, state }
     }
 
     pub(crate) fn add_broadcaster(&mut self, broad: broadcast::Sender<SendableWrapper<A::Output>>) {
@@ -116,6 +120,7 @@ impl<A: ActorState> ActorRunner<A> {
         let Self {
             state,
             mut scheduler,
+            ..
         } = self;
         state.finalize(&mut scheduler).await;
         scheduler.finalize();
@@ -124,7 +129,7 @@ impl<A: ActorState> ActorRunner<A> {
 
 impl<A: ActorState> Scheduler<A> {
     /// The constructor for the scheduler.
-    fn new() -> Self {
+    fn new(edges: SendableAnyMap) -> Self {
         let recv = SendableWrapper::new(select_all([]));
         let queue = SendableWrapper::new(FuturesCollection::new());
         let tasks = SendableWrapper::new(FuturesCollection::new());
@@ -132,6 +137,7 @@ impl<A: ActorState> Scheduler<A> {
             recv,
             queue,
             tasks,
+            edges,
             outbound: None,
             stream_count: 0,
             future_count: 0,
@@ -262,6 +268,59 @@ impl<A: ActorState> Scheduler<A> {
         if let Some(out) = self.outbound.as_mut() {
             out.send(msg.into())
         }
+    }
+
+    /// Adds a client to the set of connections to other actors, which the state can access later.
+    pub fn add_edge<P: 'static + Send, M: 'static + Send>(&mut self, client: SinkClient<P, M>) {
+        _ = self.edges.insert(client);
+    }
+
+    /// Gets a reference to a sink client to another actor.
+    pub fn get_edge<P: 'static + Send, M: 'static + Send>(&self) -> Option<&SinkClient<P, M>> {
+        self.edges.get::<SinkClient<P, M>>()
+    }
+
+    /// Gets mutable reference to a sink client to another actor.
+    pub fn get_edge_mut<P: 'static + Send, M: 'static + Send>(
+        &mut self,
+    ) -> Option<&mut SinkClient<P, M>> {
+        self.edges.get_mut::<SinkClient<P, M>>()
+    }
+
+    /// Removes a client to the set of connections to other actors.
+    pub fn remove_edge<P: 'static + Send, M: 'static + Send>(&mut self) {
+        _ = self.edges.remove::<SinkClient<P, M>>();
+    }
+
+    /// Adds an arbitrary data to the set of connections to other actors, which the state can
+    /// access later. This method is intended to be used with containers hold that multiple clients
+    /// of the same type.
+    ///
+    /// For example, you can attach a series of actor clients that are indexed using a hashmap.
+    pub fn add_multi_edge<C: 'static + Send>(&mut self, container: C) {
+        _ = self.edges.insert(container);
+    }
+
+    /// Gets a reference to an arbitary type held in the container that holds connections to other
+    /// actors. This method is intended to be used with containers that hold multiple clients of
+    /// the same type.
+    ///
+    /// For example, you can store and access a series of actor clients that are indexed using a
+    /// hashmap.
+    pub fn get_multi_edge<C: 'static + Send>(&self) -> Option<&C> {
+        self.edges.get::<C>()
+    }
+
+    /// Gets a mutable reference to an arbitary type held in the container that holds connections to other
+    /// actors. This method is intended to be used with containers that hold multiple clients of
+    /// the same type.
+    pub fn get_multi_edge_mut<C: 'static + Send>(&mut self) -> Option<&mut C> {
+        self.edges.get_mut::<C>()
+    }
+
+    /// Adds a piece of arbitrary data from the set of connections to other actors.
+    pub fn remove_multi_edge<C: 'static + Send>(&mut self) {
+        _ = self.edges.remove::<C>();
     }
 }
 

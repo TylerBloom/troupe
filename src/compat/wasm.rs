@@ -1,3 +1,4 @@
+use anymap2::any::Any;
 use futures::FutureExt;
 use gloo_timers::future::{sleep, TimeoutFuture};
 use instant::{Duration, Instant};
@@ -33,6 +34,8 @@ impl<T> Sendable for T where T: 'static {}
 /// compilation target, and, generally speaking, `!Send` futures are more difficult to work with
 /// that `Send` futures.
 pub type SendableWrapper<T> = SendWrapper<T>;
+
+pub(crate) type SendableAnyMap = anymap2::Map<dyn 'static + Any>;
 
 /* ------ General Utils ------ */
 

@@ -1,3 +1,4 @@
+use anymap2::any::Any;
 use futures::Stream;
 use pin_project::pin_project;
 use std::{
@@ -82,6 +83,8 @@ impl<T: SendableStream> Stream for SendableWrapper<T> {
         self.project().0.poll_next(cx)
     }
 }
+
+pub(crate) type SendableAnyMap = anymap2::Map<dyn 'static + Send + Any>;
 
 /* ------ General Utils ------ */
 
