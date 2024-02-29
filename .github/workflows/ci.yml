@@ -2,15 +2,44 @@ name: Troupe CI
 
 on:
   push:
-    branches: [ main, development ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, development ]
+    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  code_cleaniness_checks:
+    name: Formatting Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Rust
+        uses: hecrj/setup-rust-action@v2
+        with:
+          rust-version: nightly
+          components: rustfmt
+      - uses: actions/checkout@v4
+      - run: cargo fmt --check
+  wasm_build:
+    needs: code_cleaniness_checks
+    name: Wasm Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, beta, nightly]
+    steps:
+      - uses: hecrj/setup-rust-action@v2
+        with:
+          rust-version: ${{ matrix.rust }}
+          targets: wasm32-unknown-unknown
+      - uses: actions/checkout@v4
+      - run: cargo build --target=wasm32-unknown-unknown --verbose
+      - run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - run: wasm-pack test --headless --chrome --firefox --verbose
+      - run: cargo doc --target wasm32-unknown-unknown --verbose
   native_builds:
+    needs: code_cleaniness_checks
     name: Native Tests
     runs-on: ${{ matrix.os }}
     strategy:
@@ -28,19 +57,27 @@ jobs:
       - run: cargo test --verbose
       - run: cargo test --no-default-features --features async-std --verbose
       - run: cargo doc --verbose
-  wasm_build:
-    name: Wasm Tests
+  coverage:
+    needs: [native_builds, wasm_build]
+    name: Coverage
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust: [stable, beta, nightly]
     steps:
-      - uses: hecrj/setup-rust-action@v2
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: hecrj/setup-rust-action@v2
         with:
-          rust-version: ${{ matrix.rust }}
-          targets: wasm32-unknown-unknown
-      - uses: actions/checkout@v4
-      - run: cargo build --target=wasm32-unknown-unknown --verbose
-      - run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - run: wasm-pack test --headless --chrome --firefox --verbose
-      - run: cargo doc --target wasm32-unknown-unknown --verbose
+          rust-version: stable
+      - name: Fetch Tarpaulin
+        uses: actions-rs/install@v0.1
+        with:
+          crate: cargo-tarpaulin
+          version: 'latest'
+      - name: Generate code coverage
+        run: |
+          cargo tarpaulin --verbose --workspace --timeout 120 --out Xml
+      - name: Report coverage to Codecov
+        uses: codecov/codecov-action@v4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
