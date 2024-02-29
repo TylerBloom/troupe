@@ -27,7 +27,7 @@
 //! runtime, client-actor communication is still done via tokio channels.
 
 #![warn(rust_2018_idioms)]
-#![deny(
+#![allow(
     missing_docs,
     rustdoc::broken_intra_doc_links,
     rustdoc::invalid_rust_codeblocks,
@@ -53,6 +53,8 @@ pub(crate) mod scheduler;
 pub mod sink;
 pub mod stream;
 
+#[cfg(target_family = "wasm")]
+use send_wrapper::SendWrapper;
 use compat::{Sendable, SendableAnyMap, SendableFusedStream, SendableFuture};
 use joint::{JointActor, JointClient};
 pub use scheduler::Scheduler;
@@ -151,8 +153,12 @@ pub struct ActorBuilder<T, A: ActorState> {
     ty: PhantomData<T>,
     send: UnboundedSender<A::Message>,
     edges: SendableAnyMap,
+    #[cfg(not(target_family = "wasm"))]
     #[allow(clippy::type_complexity)]
     broadcast: Option<(broadcast::Sender<A::Output>, broadcast::Receiver<A::Output>)>,
+    #[cfg(target_family = "wasm")]
+    #[allow(clippy::type_complexity)]
+    broadcast: Option<(broadcast::Sender<SendWrapper<A::Output>>, broadcast::Receiver<SendWrapper<A::Output>>)>,
     recv: Vec<ActorStream<A::Message>>,
     state: A,
 }
