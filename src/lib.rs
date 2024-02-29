@@ -53,12 +53,12 @@ pub(crate) mod scheduler;
 pub mod sink;
 pub mod stream;
 
-#[cfg(target_family = "wasm")]
-use send_wrapper::SendWrapper;
-use compat::{Sendable, SendableAnyMap, SendableFusedStream, MaybeSendFuture};
+use compat::{MaybeSendFuture, Sendable, SendableAnyMap, SendableFusedStream};
 use joint::{JointActor, JointClient};
 pub use scheduler::Scheduler;
 use scheduler::{ActorRunner, ActorStream};
+#[cfg(target_family = "wasm")]
+use send_wrapper::SendWrapper;
 use sink::{SinkActor, SinkClient};
 use stream::{StreamActor, StreamClient};
 pub use tokio::sync::oneshot::{
@@ -158,7 +158,10 @@ pub struct ActorBuilder<T, A: ActorState> {
     broadcast: Option<(broadcast::Sender<A::Output>, broadcast::Receiver<A::Output>)>,
     #[cfg(target_family = "wasm")]
     #[allow(clippy::type_complexity)]
-    broadcast: Option<(broadcast::Sender<SendWrapper<A::Output>>, broadcast::Receiver<SendWrapper<A::Output>>)>,
+    broadcast: Option<(
+        broadcast::Sender<SendWrapper<A::Output>>,
+        broadcast::Receiver<SendWrapper<A::Output>>,
+    )>,
     recv: Vec<ActorStream<A::Message>>,
     state: A,
 }
