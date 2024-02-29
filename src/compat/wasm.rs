@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use super::SendableFuture;
+use super::{Sendable, SendableFuture};
 
 /* ------ Send workarounds ------ */
 

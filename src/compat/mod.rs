@@ -21,7 +21,7 @@ pub use wasm::*;
 /// WASM as easy as possible.
 pub trait Sendable: 'static + MaybeSend {}
 
-impl<T> Sendable for T where T: 'static + Send {}
+impl<T> Sendable for T where T: 'static + MaybeSend {}
 
 /// For native targets, troupe requires nearly every future to be `Send`. For WASM targets, nothing
 /// needs to be `Send` because nothing can be sent across threads.
