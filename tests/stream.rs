@@ -23,23 +23,16 @@ impl ActorState for DummyStream {
     type Message = Processed;
     type Output = Processed;
 
-    fn start_up(&mut self, _: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
+    async fn start_up(&mut self, _: &mut Scheduler<Self>) {
         self.started.take().unwrap().send(Started).unwrap();
-        std::future::ready(())
     }
 
-    fn process(
-        &mut self,
-        scheduler: &mut Scheduler<Self>,
-        msg: Self::Message,
-    ) -> impl SendableFuture<Output = ()> {
+    async fn process(&mut self, scheduler: &mut Scheduler<Self>, msg: Self::Message) {
         scheduler.broadcast(msg);
-        std::future::ready(())
     }
 
-    fn finalize(self, _: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
+    async fn finalize(self, _: &mut Scheduler<Self>) {
         self.completed.send(Completed).unwrap();
-        std::future::ready(())
     }
 }
 
