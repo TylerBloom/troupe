@@ -82,6 +82,10 @@ use tokio::sync::{
 /// `ActorType`, which informs the [`ActorBuilder`] what kind of actor it is working with. For
 /// sink-like actors, use the [`SinkActor`] type. For stream-like actors, use the [`StreamActor`]
 /// type. For actors that function as both, use the [`JointActor`] type.
+///
+/// Note: When implementing this trait, all of the methods are `async` and you can use the `async
+/// fn` to implement them. Their current bounds of `MaybeSendFuture` are there to abstract over the
+/// different requirements for native and WASM targets.
 pub trait ActorState: Sendable + Sized {
     /// This type should either be [`SinkActor`], [`StreamActor`], or [`JointActor`]. This type is
     /// mostly a marker to inform the [`ActorBuilder`].
@@ -104,6 +108,9 @@ pub trait ActorState: Sendable + Sized {
     /// Before starting the main loop of running the actor, this method is called to finalize any
     /// setup of the actor state, such as pulling data from a database or from over the network. No
     /// inbound messages will be processed until this method is completed.
+    ///
+    /// Note: When implementing this method, you can use `async fn` instead of `impl
+    /// MaybeSendFuture`.
     #[allow(unused_variables)]
     fn start_up(&mut self, scheduler: &mut Scheduler<Self>) -> impl MaybeSendFuture<Output = ()> {
         std::future::ready(())
@@ -114,6 +121,9 @@ pub trait ActorState: Sendable + Sized {
     /// containing a [`OneshotChannel`](tokio::sync::oneshot::channel) sender. The state can also
     /// queue futures and attach streams in the [`Scheduler`]. Finally, for [`StreamActor`]s and
     /// [`JointActor`]s, the state can broadcast messages via [`Scheduler`].
+    ///
+    /// Note: When implementing this method, you can use `async fn` instead of `impl
+    /// MaybeSendFuture`.
     fn process(
         &mut self,
         scheduler: &mut Scheduler<Self>,
@@ -123,6 +133,9 @@ pub trait ActorState: Sendable + Sized {
     /// Once the actor has died, this method is called to allow the actor to clean up anything that
     /// remains. Note that this method is also called even for [`Permanent`] actors that have
     /// expired.
+    ///
+    /// Note: When implementing this method, you can use `async fn` instead of `impl
+    /// MaybeSendFuture`.
     #[allow(unused_variables)]
     fn finalize(self, scheduler: &mut Scheduler<Self>) -> impl MaybeSendFuture<Output = ()> {
         std::future::ready(())
