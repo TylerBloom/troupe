@@ -2,14 +2,14 @@ use anymap2::any::Any;
 
 /* ------ Send workarounds ------ */
 
-/// This trait abstracts over the requirements for spawning a task. In native async runtimes, a
+/// This trait abstracts over put of the requirements for spawning an async task. In native async runtimes, a
 /// task might be ran in a different thread, so the future must be `'static + Send`. In WASM, you
 /// are always running in a single thread, so spawning a task only requires that the future that
 /// the future is `'static`. This concept is used throughout `troupe` to make writing actors in
 /// WASM as easy as possible.
-pub trait Sendable: 'static + Send {}
+pub trait MaybeSend: Send { }
 
-impl<T> Sendable for T where T: 'static + Send {}
+impl<T> MaybeSend for T where T: Send {}
 
 pub(crate) type SendableAnyMap = anymap2::Map<dyn 'static + Send + Any>;
 
@@ -35,7 +35,7 @@ mod tokio {
         task::{Context, Poll},
     };
 
-    use super::Sendable;
+    use super::super::Sendable;
 
     /// A wrapper around the async runtime which spawns a future that will execute in the
     /// background.
@@ -82,7 +82,7 @@ mod async_std {
         task::{Context, Poll},
     };
 
-    use super::Sendable;
+    use super::super::Sendable;
 
     /// A wrapper around the async runtime which spawns a future that will execute in the
     /// background.

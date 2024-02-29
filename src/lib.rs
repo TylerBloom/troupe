@@ -27,7 +27,7 @@
 //! runtime, client-actor communication is still done via tokio channels.
 
 #![warn(rust_2018_idioms)]
-#![allow(
+#![deny(
     missing_docs,
     rustdoc::broken_intra_doc_links,
     rustdoc::invalid_rust_codeblocks,
@@ -55,7 +55,7 @@ pub mod stream;
 
 #[cfg(target_family = "wasm")]
 use send_wrapper::SendWrapper;
-use compat::{Sendable, SendableAnyMap, SendableFusedStream, SendableFuture};
+use compat::{Sendable, SendableAnyMap, SendableFusedStream, MaybeSendFuture};
 use joint::{JointActor, JointClient};
 pub use scheduler::Scheduler;
 use scheduler::{ActorRunner, ActorStream};
@@ -105,7 +105,7 @@ pub trait ActorState: Sendable + Sized {
     /// setup of the actor state, such as pulling data from a database or from over the network. No
     /// inbound messages will be processed until this method is completed.
     #[allow(unused_variables)]
-    fn start_up(&mut self, scheduler: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
+    fn start_up(&mut self, scheduler: &mut Scheduler<Self>) -> impl MaybeSendFuture<Output = ()> {
         std::future::ready(())
     }
 
@@ -118,13 +118,13 @@ pub trait ActorState: Sendable + Sized {
         &mut self,
         scheduler: &mut Scheduler<Self>,
         msg: Self::Message,
-    ) -> impl SendableFuture<Output = ()>;
+    ) -> impl MaybeSendFuture<Output = ()>;
 
     /// Once the actor has died, this method is called to allow the actor to clean up anything that
     /// remains. Note that this method is also called even for [`Permanent`] actors that have
     /// expired.
     #[allow(unused_variables)]
-    fn finalize(self, scheduler: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
+    fn finalize(self, scheduler: &mut Scheduler<Self>) -> impl MaybeSendFuture<Output = ()> {
         std::future::ready(())
     }
 }

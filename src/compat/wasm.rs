@@ -17,9 +17,9 @@ use super::SendableFuture;
 /// are always running in a single thread, so spawning a task only requires that the future that
 /// the future is `'static`. This concept is used throughout `troupe` to make writing actors in
 /// WASM as easy as possible.
-pub trait Sendable: 'static {}
+pub trait MaybeSend {}
 
-impl<T> Sendable for T where T: 'static {}
+impl<T> MaybeSend for T {}
 
 pub(crate) type SendableAnyMap = anymap2::Map<dyn 'static + Any>;
 

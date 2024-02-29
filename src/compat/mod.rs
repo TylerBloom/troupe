@@ -14,6 +14,21 @@ mod wasm;
 #[cfg(target_family = "wasm")]
 pub use wasm::*;
 
+/// This trait abstracts over the requirements for spawning a task. In native async runtimes, a
+/// task might be ran in a different thread, so the future must be `'static + Send`. In WASM, you
+/// are always running in a single thread, so spawning a task only requires that the future that
+/// the future is `'static`. This concept is used throughout `troupe` to make writing actors in
+/// WASM as easy as possible.
+pub trait Sendable: 'static + MaybeSend { }
+
+impl<T> Sendable for T where T: 'static + Send {}
+
+/// For native targets, troupe requires nearly every future to be `Send`. For WASM targets, nothing
+/// needs to be `Send` because nothing can be sent across threads.
+pub trait MaybeSendFuture: MaybeSend + Future {}
+
+impl<T> MaybeSendFuture for T where T: MaybeSend + Future {}
+
 /// A trait to abstract over if a future can be processed in a seperate async process.
 pub trait SendableFuture: Sendable + Future {}
 
