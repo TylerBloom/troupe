@@ -1,3 +1,6 @@
+#[cfg(target_family = "wasm")]
+use send_wrapper::SendWrapper;
+
 use futures::{
     stream::{select_all, Fuse, FusedStream, FuturesUnordered, SelectAll},
     FutureExt, Stream, StreamExt,
@@ -67,15 +70,26 @@ pub struct Scheduler<A: ActorState> {
 }
 
 struct OutboundQueue<M> {
+    #[cfg(not(target_family = "wasm"))]
     send: broadcast::Sender<M>,
+    #[cfg(target_family = "wasm")]
+    send: broadcast::Sender<SendWrapper<M>>,
 }
 
 impl<M: Sendable + Clone> OutboundQueue<M> {
+    #[cfg(not(target_family = "wasm"))]
     fn new(send: broadcast::Sender<M>) -> Self {
         Self { send }
     }
 
+    #[cfg(target_family = "wasm")]
+    fn new(send: broadcast::Sender<SendWrapper<M>>) -> Self {
+        Self { send }
+    }
+
     fn send(&mut self, msg: M) {
+        #[cfg(target_family = "wasm")]
+        let msg = SendWrapper::new(msg);
         let _ = self.send.send(msg);
     }
 }
@@ -93,7 +107,13 @@ impl<A: ActorState> ActorRunner<A> {
         Self { scheduler, state }
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn add_broadcaster(&mut self, broad: broadcast::Sender<A::Output>) {
+        self.scheduler.outbound = Some(OutboundQueue::new(broad));
+    }
+
+    #[cfg(target_family = "wasm")]
+    pub(crate) fn add_broadcaster(&mut self, broad: broadcast::Sender<SendWrapper<A::Output>>) {
         self.scheduler.outbound = Some(OutboundQueue::new(broad));
     }
 

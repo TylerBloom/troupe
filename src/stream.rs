@@ -38,19 +38,30 @@ pub struct StreamClient<M> {
 /// receiver.
 struct BroadcastStream<M> {
     /// A copy of the original channel, used for cloning the client.
+    #[cfg(not(target_family = "wasm"))]
     copy: broadcast::Receiver<M>,
+    #[cfg(target_family = "wasm")]
+    copy: broadcast::Receiver<SendWrapper<M>>,
+    #[cfg(not(target_family = "wasm"))]
     /// The stream that is polled.
+    inner: tokio_stream::wrappers::BroadcastStream<M>,
     #[cfg(target_family = "wasm")]
     inner: tokio_stream::wrappers::BroadcastStream<SendWrapper<M>>,
-    #[cfg(not(target_family = "wasm"))]
-    inner: tokio_stream::wrappers::BroadcastStream<M>,
 }
 
 impl<M> StreamClient<M>
 where
     M: Sendable + Clone,
 {
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn new(recv: broadcast::Receiver<M>) -> Self {
+        Self {
+            recv: BroadcastStream::new(recv),
+        }
+    }
+
+    #[cfg(target_family = "wasm")]
+    pub(crate) fn new(recv: broadcast::Receiver<SendWrapper<M>>) -> Self {
         Self {
             recv: BroadcastStream::new(recv),
         }
@@ -61,15 +72,16 @@ impl<M> BroadcastStream<M>
 where
     M: Sendable + Clone,
 {
-    // FIXME: This won't compile because BroadcastStream requires that the objects be Send + Clone.
-    // The solution is to wrap each item in a SendWrapper and then unwrap them before giving them
-    // to the caller. All of this is obscurred from the caller, so it will not cause breaking
-    // changes.
+    #[cfg(not(target_family = "wasm"))]
     fn new(stream: broadcast::Receiver<M>) -> Self {
         let copy = stream.resubscribe();
-        #[cfg(target_family = "wasm")]
-        let inner = tokio_stream::wrappers::BroadcastStream::new(SendWrapper::new(stream));
-        #[cfg(not(target_family = "wasm"))]
+        let inner = tokio_stream::wrappers::BroadcastStream::new(stream);
+        Self { copy, inner }
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn new(stream: broadcast::Receiver<SendWrapper<M>>) -> Self {
+        let copy = stream.resubscribe();
         let inner = tokio_stream::wrappers::BroadcastStream::new(stream);
         Self { copy, inner }
     }
@@ -92,7 +104,8 @@ where
     type Item = Result<M, u64>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.get_mut().recv).poll_next(cx)
+        let digest = Pin::new(&mut self.get_mut().recv).poll_next(cx);
+        digest
     }
 }
 
@@ -106,7 +119,11 @@ where
         let done = ready!(self.inner.poll_next_unpin(cx));
         drop(self.copy.try_recv());
         match done {
-            Some(Ok(val)) => Poll::Ready(Some(Ok(val))),
+            Some(Ok(val)) => {
+                #[cfg(target_family = "wasm")]
+                let val = val.take();
+                Poll::Ready(Some(Ok(val)))
+            }
             Some(Err(BroadcastStreamRecvError::Lagged(count))) => Poll::Ready(Some(Err(count))),
             None => Poll::Ready(None),
         }
