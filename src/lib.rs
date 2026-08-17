@@ -53,24 +53,14 @@ pub(crate) mod scheduler;
 pub mod sink;
 pub mod stream;
 
-use compat::{MaybeSendFuture, Sendable, SendableAnyMap, SendableFusedStream};
-use joint::{JointActor, JointClient};
-pub use scheduler::Scheduler;
+use futures::StreamExt;
+
+use compat::{MaybeSendFuture, Sendable, SendableFusedStream};
 use scheduler::{ActorRunner, ActorStream};
-#[cfg(target_family = "wasm")]
-use send_wrapper::SendWrapper;
-use sink::{SinkActor, SinkClient};
-use stream::{StreamActor, StreamClient};
+
+pub use scheduler::Scheduler;
 pub use tokio::sync::oneshot::{
     channel as oneshot_channel, Receiver as OneshotReceiver, Sender as OneshotSender,
-};
-
-use std::marker::PhantomData;
-
-use futures::StreamExt;
-use tokio::sync::{
-    broadcast,
-    mpsc::{unbounded_channel, UnboundedSender},
 };
 
 /// The core abstraction of the actor model. An [`ActorState`] sits at the heart of every actor. It
@@ -89,21 +79,11 @@ use tokio::sync::{
 pub trait ActorState: Sendable + Sized {
     /// This type should either be [`SinkActor`], [`StreamActor`], or [`JointActor`]. This type is
     /// mostly a marker to inform the [`ActorBuilder`].
-    type ActorType;
-
-    /// This type should either be [`Permanent`] or [`Transient`]. This type is mostly a marker
-    /// type to inform the actor's client(s) if it should expect the actor to shutdown at any
-    /// point.
-    type Permanence;
+    type ActorKind: ActorKind<Self>;
 
     /// Inbound messages to the actor must be this type. Clients will send the actor messages of
     /// this type and any queued futures or streams must yield this type.
     type Message: Sendable;
-
-    /// For [`SinkActor`]s and [`JointActor`]s, this is the message type which is broadcasts.
-    /// For [`StreamActor`]s, this can be `()` (unfortunately, default associated types are
-    /// unstable).
-    type Output: Sendable + Clone;
 
     /// Before starting the main loop of running the actor, this method is called to finalize any
     /// setup of the actor state, such as pulling data from a database or from over the network. No
@@ -142,206 +122,97 @@ pub trait ActorState: Sendable + Sized {
     }
 }
 
-/// A marker type used in the [`ActorState`]. It communicates that the actor should never die. As
-/// such, the [`Scheduler`] will not provide the actor state a method to shutdown. Also, the
-/// [`Tracker`](crate::sink::permanent::Tracker)s for request-response style messages will implictly unwrap responses from their
-/// oneshot channels.
-#[derive(Debug)]
-pub struct Permanent;
+/// Where `ActorState` describes how an actor reacts to messages, the `ActorKind` trait models how
+/// inputs to and outputs from the actor are modelled.
+///
+/// When the actor is to be launched, the actor kind is constructed. This enables the customizations
+/// of input streams to the actor. The constructed kind will also be embedded in the `Scheduler`,
+/// enabling for various types of output to be embedded into the scheduler.
+pub trait ActorKind<S: ActorState>: Sized + Sendable {
+    /// Defines the type of client that is returned to the builder of the actor after launch.
+    type Client;
+    /// Defines the config that needs to be passed in during construction.
+    type Config;
 
-/// A marker type used in the [`ActorState`]. It communicates that the actor should exist for a
-/// non-infinite amount of time. The [`Scheduler`] will provide the actor state a method to
-/// shutdown. Also, the [`Tracker`](crate::sink::permanent::Tracker)s for request-response style messages will not implictly unwrap
-/// responses from their oneshot channels.
-#[derive(Debug)]
-pub struct Transient;
+    /// Uses the given config to construct the client and additional state that will live inside of
+    /// the [`Scheduler`]. Also, this method returns a closure that will be used to populate the
+    /// scheduler after the its construction as this state is needed for the scheduler's
+    /// construction.
+    fn construct(
+        config: Self::Config,
+    ) -> (Self, Self::Client, impl 'static + FnOnce(&mut Scheduler<S>));
+}
 
 /// Holds a type that implements [`ActorState`], helps aggregate all data that the actor needs, and
 /// then launches the async actor process. When the actor process is launched, a client is returned
 /// to the caller. This client's type depends on the actor's type.
 #[allow(missing_debug_implementations)]
-pub struct ActorBuilder<T, A: ActorState> {
-    /// The type of actor that is being built. This is the same as `A::ActorType` but
-    /// specialization is not yet supported.
-    ty: PhantomData<T>,
-    send: UnboundedSender<A::Message>,
-    edges: SendableAnyMap,
-    #[cfg(not(target_family = "wasm"))]
-    #[allow(clippy::type_complexity)]
-    broadcast: Option<(broadcast::Sender<A::Output>, broadcast::Receiver<A::Output>)>,
-    #[cfg(target_family = "wasm")]
-    #[allow(clippy::type_complexity)]
-    broadcast: Option<(
-        broadcast::Sender<SendWrapper<A::Output>>,
-        broadcast::Receiver<SendWrapper<A::Output>>,
-    )>,
+pub struct ActorBuilder<A: ActorState, C> {
     recv: Vec<ActorStream<A::Message>>,
+    config: C,
     state: A,
 }
 
 /* --------- All actors --------- */
-impl<T, A> ActorBuilder<T, A>
-where
-    A: ActorState<ActorType = T>,
-{
+impl<A: ActorState> ActorBuilder<A, ()> {
     /// Constructs a new builder for an actor that uses the given state.
     pub fn new(state: A) -> Self {
-        let (send, recv) = unbounded_channel();
-        let recv = vec![recv.into()];
         Self {
             state,
-            send,
-            recv,
-            broadcast: None,
-            ty: PhantomData,
-            edges: SendableAnyMap::new(),
+            recv: vec![],
+            config: (),
         }
     }
+}
 
+impl<A: ActorState, C> ActorBuilder<A, C> {
     /// Attaches a stream that will be used by the actor once its spawned. No messages will be
     /// processed until after the actor is launched.
-    pub fn attach_stream<S, I>(&mut self, stream: S)
+    pub fn attach_stream<S, I>(mut self, stream: S) -> Self
     where
         S: SendableFusedStream<Item = I>,
         I: Into<A::Message>,
     {
-        self.recv
-            .push(ActorStream::Secondary(Box::new(stream.map(|m| m.into()))));
+        self.recv.push(Box::new(stream.map(|m| m.into())));
+        self
     }
 
-    /// Adds a client to the builder, which the state can access later.
-    pub fn add_edge<P: 'static + Send, M: 'static + Send>(&mut self, client: SinkClient<P, M>) {
-        _ = self.edges.insert(client);
-    }
-
-    /// Adds an arbitrary data to the builder, which the state can access later. This method is
-    /// intended to be used with containers hold that multiple clients of the same type.
-    ///
-    /// For example, you can attach a series of actor clients that are indexed using a hashmap.
-    pub fn add_multi_edge<C: 'static + Send>(&mut self, container: C) {
-        _ = self.edges.insert(container);
-    }
-}
-
-/* --------- Sink actors --------- */
-impl<A> ActorBuilder<SinkActor, A>
-where
-    A: ActorState<ActorType = SinkActor>,
-{
-    /// Returns a client for the actor that will be spawned. While the returned client will be able
-    /// to send messages, those messages will not be processed until after the actor is launched by
-    /// the builder.
-    pub fn client(&self) -> SinkClient<A::Permanence, A::Message> {
-        SinkClient::new(self.send.clone())
-    }
-
-    /// Launches an actor that uses the given state and returns a client to the actor.
-    pub fn launch(self) -> SinkClient<A::Permanence, A::Message> {
+    /// Provides config for the state's `ActorKind` to be used during initialization and launching.
+    pub fn config(
+        self,
+        config: <A::ActorKind as ActorKind<A>>::Config,
+    ) -> ActorBuilder<A, <A::ActorKind as ActorKind<A>>::Config> {
         let Self {
-            send,
             recv,
             state,
-            edges,
-            ..
+            config: _,
         } = self;
-        let mut runner = ActorRunner::new(state, edges);
-        recv.into_iter().for_each(|r| runner.add_stream(r));
-        runner.launch();
-        SinkClient::new(send)
-    }
-}
-
-/* --------- Stream actors --------- */
-impl<A> ActorBuilder<StreamActor, A>
-where
-    A: ActorState<ActorType = StreamActor>,
-{
-    /// Returns a client for the actor that will be spawned. The client will not yield any messages
-    /// until after the actor is launched and has sent a message.
-    pub fn client(&mut self) -> StreamClient<A::Output> {
-        let (_, broad) = self
-            .broadcast
-            .get_or_insert_with(|| broadcast::channel(100));
-        StreamClient::new(broad.resubscribe())
-    }
-
-    /// Launches an actor that uses the given state. Returns a client to the actor.
-    pub fn launch<S>(self, stream: S) -> StreamClient<A::Output>
-    where
-        S: SendableFusedStream<Item = A::Message>,
-    {
-        let Self {
-            mut recv,
-            state,
-            broadcast,
-            edges,
-            ..
-        } = self;
-        let (broad, sub) = broadcast.unwrap_or_else(|| broadcast::channel(100));
-        recv.push(ActorStream::Secondary(Box::new(stream)));
-        let mut runner = ActorRunner::new(state, edges);
-        runner.add_broadcaster(broad);
-        recv.into_iter().for_each(|r| runner.add_stream(r));
-        runner.launch();
-        StreamClient::new(sub)
-    }
-}
-
-/* --------- Joint actors --------- */
-impl<A> ActorBuilder<JointActor, A>
-where
-    A: ActorState<ActorType = JointActor>,
-{
-    /// Returns a stream client for the actor that will be spawned. The client will not yield any
-    /// messages until after the actor is launched and has sent a message.
-    pub fn stream_client(&self) -> StreamClient<A::Output> {
-        StreamClient::new(self.broadcast.as_ref().unwrap().1.resubscribe())
-    }
-
-    /// Returns a sink client for the actor that will be spawned. While the returned client will be
-    /// able to send messages, those messages will not be processed until after the actor is
-    /// launched by the builder.
-    pub fn sink_client(&self) -> SinkClient<A::Permanence, A::Message> {
-        SinkClient::new(self.send.clone())
-    }
-
-    /// Returns a joint client for the actor that will be spawned. While the returned client will be
-    /// able to send messages, those messages will not be processed until after the actor is
-    /// launched by the builder. The client will also not yield any messages until after the actor
-    /// is launched and has sent a message.
-    pub fn client(&self) -> SinkClient<A::Permanence, A::Message> {
-        SinkClient::new(self.send.clone())
-    }
-
-    /// Launches an actor that uses the given state and stream. Returns a client to the actor.
-    pub fn launch_with_stream<S>(
-        mut self,
-        stream: S,
-    ) -> JointClient<A::Permanence, A::Message, A::Output>
-    where
-        S: SendableFusedStream<Item = A::Message>,
-    {
-        self.attach_stream(stream);
-        self.launch()
-    }
-
-    /// Launches an actor that uses the given state. Returns a client to the actor.
-    pub fn launch(self) -> JointClient<A::Permanence, A::Message, A::Output> {
-        let Self {
-            send,
+        ActorBuilder {
             recv,
+            config,
             state,
-            broadcast,
-            edges,
-            ..
+        }
+    }
+}
+
+impl<A, K, C> ActorBuilder<A, C>
+where
+    K: ActorKind<A, Config = C>,
+    A: ActorState<ActorKind = K>,
+{
+    /// Launches the actor in a seperate task and returns a handle to that actor from which messages
+    /// can be send/received.
+    pub fn launch(self) -> K::Client {
+        let Self {
+            recv,
+            config,
+            state,
         } = self;
-        let (broad, sub) = broadcast.unwrap_or_else(|| broadcast::channel(100));
-        let mut runner = ActorRunner::new(state, edges);
+        let (kind, client, init) = A::ActorKind::construct(config);
+        let mut runner = ActorRunner::new(state, kind);
+        init(&mut runner.scheduler);
         recv.into_iter().for_each(|r| runner.add_stream(r));
-        runner.add_broadcaster(broad);
         runner.launch();
-        let sink = SinkClient::new(send);
-        let stream = StreamClient::new(sub);
-        JointClient::new(sink, stream)
+        client
     }
 }

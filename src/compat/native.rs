@@ -1,5 +1,3 @@
-use anymap2::any::Any;
-
 /* ------ Send workarounds ------ */
 
 /// This trait abstracts over put of the requirements for spawning an async task. In native async runtimes, a
@@ -10,8 +8,6 @@ use anymap2::any::Any;
 pub trait MaybeSend: Send {}
 
 impl<T> MaybeSend for T where T: Send {}
-
-pub(crate) type SendableAnyMap = anymap2::Map<dyn 'static + Send + Any>;
 
 /* ------ General Utils ------ */
 

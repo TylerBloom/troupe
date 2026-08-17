@@ -18,10 +18,8 @@ struct DummyStream {
 }
 
 impl ActorState for DummyStream {
-    type ActorType = StreamActor;
-    type Permanence = Permanent;
+    type ActorKind = StreamActor<Processed>;
     type Message = Processed;
-    type Output = Processed;
 
     async fn start_up(&mut self, _: &mut Scheduler<Self>) {
         self.started.take().unwrap().send(Started).unwrap();
@@ -51,7 +49,7 @@ async fn startup_and_teardown() {
     assert_eq!(Err(TryRecvError::Empty), started_recv.try_recv());
     assert_eq!(Err(TryRecvError::Empty), comped_recv.try_recv());
     let stream = futures::stream::iter(std::iter::once(Processed)).fuse();
-    let mut client = ActorBuilder::new(state).launch(stream);
+    let mut client = ActorBuilder::new(state).attach_stream(stream).launch();
     /* ----- Successful startup test ----- */
     tokio::select! {
         _ = sleep() => {
@@ -92,22 +90,15 @@ struct Counter {
 }
 
 impl ActorState for Counter {
-    type ActorType = StreamActor;
-    type Permanence = Transient;
+    type ActorKind = StreamActor<usize>;
     type Message = ();
-    type Output = usize;
 
-    fn start_up(&mut self, scheduler: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
+    async fn start_up(&mut self, scheduler: &mut Scheduler<Self>) {
         self.started.take().unwrap().send(Started).unwrap();
         scheduler.schedule(Instant::now() + Duration::from_millis(5), ());
-        std::future::ready(())
     }
 
-    fn process(
-        &mut self,
-        scheduler: &mut Scheduler<Self>,
-        (): Self::Message,
-    ) -> impl SendableFuture<Output = ()> {
+    async fn process(&mut self, scheduler: &mut Scheduler<Self>, (): Self::Message) {
         println!("Processing message!!");
         let next = self.count + 1;
         scheduler.broadcast(std::mem::replace(&mut self.count, next));
@@ -115,12 +106,10 @@ impl ActorState for Counter {
         if self.count > 10 {
             scheduler.shutdown();
         }
-        std::future::ready(())
     }
 
-    fn finalize(self, _: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
+    async fn finalize(self, _: &mut Scheduler<Self>) {
         self.completed.send(Completed).unwrap();
-        std::future::ready(())
     }
 }
 
@@ -135,10 +124,8 @@ async fn stop_after_ten_messages() {
     };
     assert_eq!(Err(TryRecvError::Empty), started_recv.try_recv());
     assert_eq!(Err(TryRecvError::Empty), comped_recv.try_recv());
-    let stream = futures::stream::iter(std::iter::empty()).fuse();
-    let mut builder = ActorBuilder::new(state);
-    let _client = builder.client();
-    let mut client = builder.launch(stream);
+    let stream = futures::stream::iter(std::iter::empty::<()>()).fuse();
+    let mut client = ActorBuilder::new(state).attach_stream(stream).launch();
     /* ----- Successful startup test ----- */
     tokio::select! {
         _ = sleep() => {

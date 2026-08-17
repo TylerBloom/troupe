@@ -18,28 +18,23 @@ struct DummyJoint {
 }
 
 impl ActorState for DummyJoint {
-    type ActorType = JointActor;
-    type Permanence = Permanent;
+    type ActorKind = JointActor<Processed>;
     type Message = Processed;
-    type Output = Processed;
 
-    fn start_up(&mut self, _: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
+    async fn start_up(&mut self, _: &mut Scheduler<Self>) {
         self.started.take().unwrap().send(Started).unwrap();
-        std::future::ready(())
     }
 
-    fn process(
+    async fn process(
         &mut self,
         scheduler: &mut Scheduler<Self>,
         msg: Self::Message,
-    ) -> impl SendableFuture<Output = ()> {
+    ) {
         scheduler.broadcast(msg);
-        std::future::ready(())
     }
 
-    fn finalize(self, _: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
+    async fn finalize(self, _: &mut Scheduler<Self>) {
         self.completed.send(Completed).unwrap();
-        std::future::ready(())
     }
 }
 
@@ -52,8 +47,7 @@ fn are_send() {
     fn is_send<T: Send>() {}
 
     is_send::<DummyJoint>();
-    is_send::<JointActor>();
-    is_send::<Permanent>();
+    is_send::<JointActor<Processed>>();
     is_send::<Started>();
     is_send::<Processed>();
     is_send::<Completed>();
@@ -70,7 +64,7 @@ async fn startup_and_teardown() {
     assert_eq!(Err(TryRecvError::Empty), started_recv.try_recv());
     assert_eq!(Err(TryRecvError::Empty), comped_recv.try_recv());
     let stream = futures::stream::iter(std::iter::once(Processed)).fuse();
-    let mut client = ActorBuilder::new(state).launch_with_stream(stream);
+    let mut client = ActorBuilder::new(state).attach_stream(stream).launch();
     /* ----- Successful startup test ----- */
     tokio::select! {
         _ = sleep() => {

@@ -1,4 +1,3 @@
-use anymap2::any::Any;
 use futures::FutureExt;
 use gloo_timers::future::{sleep, TimeoutFuture};
 use instant::{Duration, Instant};
@@ -20,8 +19,6 @@ use super::{Sendable, SendableFuture};
 pub trait MaybeSend {}
 
 impl<T> MaybeSend for T {}
-
-pub(crate) type SendableAnyMap = anymap2::Map<dyn 'static + Any>;
 
 /* ------ General Utils ------ */
 
