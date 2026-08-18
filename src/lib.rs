@@ -61,6 +61,13 @@ use compat::SendableFusedStream;
 use scheduler::ActorRunner;
 use scheduler::ActorStream;
 
+#[cfg(doc)]
+use prelude::*;
+#[cfg(doc)]
+use sink::*;
+#[cfg(doc)]
+use stream::*;
+
 pub use scheduler::Scheduler;
 pub use tokio::sync::oneshot::channel as oneshot_channel;
 pub use tokio::sync::oneshot::Receiver as OneshotReceiver;
@@ -114,8 +121,7 @@ pub trait ActorState: Sendable + Sized {
     ) -> impl MaybeSendFuture<Output = ()>;
 
     /// Once the actor has died, this method is called to allow the actor to clean up anything that
-    /// remains. Note that this method is also called even for [`Permanent`] actors that have
-    /// expired.
+    /// remains.
     ///
     /// Note: When implementing this method, you can use `async fn` instead of `impl
     /// MaybeSendFuture`.

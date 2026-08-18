@@ -208,7 +208,7 @@ impl<A: ActorState> Scheduler<A> {
 
     /// Attaches a stream that will be polled and managed by the scheduler. Messages yielded by the
     /// streams must be able to be converted into the actor's message type so that the actor can
-    /// process it. The given stream must be a [`FusedStream`]; however, the scheduler requires a
+    /// process it. The given stream must be a [`FusedStream`](futures::stream::FusedStream); however, the scheduler requires a
     /// stronger invariant than that given by `FusedStream`. The scheduler will mark a stream as
     /// "done" once the stream yields its first `None`. After that, the scheduler will never poll
     /// that stream again.

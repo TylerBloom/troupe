@@ -22,9 +22,9 @@ use crate::Scheduler;
 use crate::OneshotSender;
 
 /// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of
-/// [`ActorState`](crate::ActorState) it is dealing with. A joint actor is one that acts as both a
-/// [`SinkActor`](crate::sink::SinkActor) and a [`StreamActor`](crate::stream::StreamActor). Its
-/// clients, [`JointClient`]s, can both send messages into the actor and recieve messages forwarded
+/// [`ActorState`] it is dealing with. A joint actor is one that acts as both a [`SinkActor`] and a
+/// [`StreamActor`]. Its clients, [`JointClient`]s, can both send messages into the actor and
+/// recieve messages forwarded
 /// by the actor.
 #[derive(Debug)]
 pub struct JointActor<M> {
@@ -104,14 +104,9 @@ impl<I, O: Sendable + Clone> JointClient<I, O> {
         self.send.send(msg)
     }
 
-    /// Sends a request-response style message to a [`Permanent`] actor. The given data is paired
-    /// with a one-time use channel and sent to the actor. A
-    /// [`Tracker`](crate::sink::permanent::Tracker) that will receive a response from the actor is
-    /// returned.
-    ///
-    /// Note: Since this client is one for a permanent actor, there is an implicit unwrap once the
-    /// tracker receives a message from the actor. If the actor drops the other half of the channel
-    /// or has died somehow (likely from a panic), the returned tracker will panic too. So, it is
+    /// Sends a request-response style message to an actor. The given data is paired with a
+    /// one-time use channel and sent to the actor. A [`Tracker`] that will receive a response from
+    /// the actor is returned.
     /// important that the actor always sends back a message
     pub fn track<M, R>(&self, msg: M) -> Tracker<R>
     where

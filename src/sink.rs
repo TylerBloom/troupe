@@ -18,7 +18,7 @@ use crate::OneshotSender;
 use crate::Scheduler;
 
 /// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of
-/// [`ActorState`](crate::ActorState) it is dealing with. A sink actor is one that receives
+/// [`ActorState`] it is dealing with. A sink actor is one that receives
 /// messages from other parts of the application. By adding a oneshot channel to the message,
 /// the actor can respond with a particular piece of data. This allows for type-safe communication
 /// between different parts of your program.
@@ -113,12 +113,10 @@ impl<M> SinkClient<M> {
     pub fn send(&self, msg: impl Into<M>) -> bool {
         self.send.send(msg.into()).is_ok()
     }
-}
 
-impl<M> SinkClient<M> {
-    /// Sends a request-response style message to a [`Transient`] actor. The given data is paired
-    /// with a one-time use channel and sent to the actor. A [`Tracker`](transient::Tracker) that
-    /// will receive a response from the actor is returned.
+    /// Sends a request-response style message to an actor. The given data is paired with a
+    /// one-time use channel and sent to the actor. A [`Tracker`] that will receive a response from
+    /// the actor is returned.
     pub fn track<I, O>(&self, msg: I) -> Tracker<O>
     where
         M: From<(I, OneshotSender<O>)>,
@@ -136,7 +134,7 @@ impl<M> Clone for SinkClient<M> {
     }
 }
 
-/// A tracker for a request-response style message sent to a [`Transient`](crate::Transient) actor.
+/// A tracker for a request-response style message sent to an actor.
 ///
 /// Note: This tracker might be created after a failed attempt to send a message to a dead
 /// actor. This means that the tracker will return `None` when polled; however, that does not

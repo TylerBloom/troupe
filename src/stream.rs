@@ -22,7 +22,7 @@ pub(crate) type Broadcastee<M> = M;
 pub(crate) type Broadcastee<M> = send_wrapper::SendWrapper<M>;
 
 /// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of
-/// [`ActorState`](crate::ActorState) it is dealing with. A stream actor is one that receives
+/// [`ActorState`] it is dealing with. A stream actor is one that receives
 /// messages from one or more streams and then forwards messages to its clients.
 ///
 /// The client of a [`StreamActor`] is the [`StreamClient`]. This client implements methods for
