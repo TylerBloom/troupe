@@ -21,11 +21,18 @@ use crate::Scheduler;
 
 use crate::OneshotSender;
 
-/// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of
-/// [`ActorState`] it is dealing with. A joint actor is one that acts as both a [`SinkActor`] and a
-/// [`StreamActor`]. Its clients, [`JointClient`]s, can both send messages into the actor and
-/// recieve messages forwarded
-/// by the actor.
+/// The [`ActorKind`] for actors that both receive and broadcast messages. A joint actor is one
+/// that acts as both a [`SinkActor`] and a [`StreamActor`]. Its clients, [`JointClient`]s, can
+/// both send messages into the actor and recieve messages forwarded by the actor.
+///
+/// Note that the actor's inbound and outbound message types are distinct. Inbound messages are the
+/// state's [`Message`](ActorState::Message); outbound messages are this kind's `M`.
+///
+/// Constructing this kind does the work of both of its halves: it creates the MPSC channel that
+/// backs the client's sink side and attaches the receiving end to the [`Scheduler`], and it holds
+/// the broadcast sender that backs the client's stream side. Since the kind lives in the
+/// scheduler, which derefs to it, an [`ActorState`] broadcasts by calling
+/// [`broadcast`](JointActor::broadcast) on the scheduler it is given.
 #[derive(Debug)]
 pub struct JointActor<M> {
     broadcast: broadcast::Sender<Broadcastee<M>>,
@@ -53,6 +60,9 @@ impl<M: Sendable + Clone, A: ActorState> ActorKind<A> for JointActor<M> {
 impl<M: Sendable + Clone> JointActor<M> {
     /// Broadcasts a message to all listening clients. If the message fails to send, the message
     /// will be dropped.
+    ///
+    /// This is normally reached through the [`Scheduler`], which derefs to this type, rather than
+    /// on a `JointActor` directly.
     pub fn broadcast(&mut self, msg: impl Into<M>) {
         #[cfg(not(target_family = "wasm"))]
         let _ = self.broadcast.send(msg.into());
@@ -64,7 +74,8 @@ impl<M: Sendable + Clone> JointActor<M> {
 }
 
 /// A client to an actor. This client is a combination of the [`SinkClient`] and the
-/// [`StreamClient`].
+/// [`StreamClient`]. `I` is the type of message sent *into* the actor and `O` is the type of
+/// message broadcast *out* of it.
 #[pin_project]
 #[derive(Debug)]
 pub struct JointClient<I, O> {
@@ -107,7 +118,6 @@ impl<I, O: Sendable + Clone> JointClient<I, O> {
     /// Sends a request-response style message to an actor. The given data is paired with a
     /// one-time use channel and sent to the actor. A [`Tracker`] that will receive a response from
     /// the actor is returned.
-    /// important that the actor always sends back a message
     pub fn track<M, R>(&self, msg: M) -> Tracker<R>
     where
         I: From<(M, OneshotSender<R>)>,

@@ -17,15 +17,19 @@ use crate::OneshotReceiver;
 use crate::OneshotSender;
 use crate::Scheduler;
 
-/// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of
-/// [`ActorState`] it is dealing with. A sink actor is one that receives
+/// The [`ActorKind`] for actors that only receive messages. A sink actor is one that receives
 /// messages from other parts of the application. By adding a oneshot channel to the message,
 /// the actor can respond with a particular piece of data. This allows for type-safe communication
 /// between different parts of your program.
 ///
 /// The client of a [`SinkActor`] is the [`SinkClient`]. This client implements methods that allow
 /// for the sending of messages to this client. Communication between a sink client and sink actor
-/// uses an MPSC-style channel (see [`mpsc::channel`](tokio::sync::mpsc)).
+/// uses an MPSC-style channel (see [`mpsc::channel`](tokio::sync::mpsc)); constructing this kind
+/// creates that channel, hands the sending half to the client, and attaches the receiving half to
+/// the actor's [`Scheduler`].
+///
+/// Unlike the other kinds, a sink actor sends nothing back to its clients outside of the oneshot
+/// channels carried by its own messages, so this type holds no state of its own.
 #[derive(Debug)]
 pub struct SinkActor {}
 
@@ -60,7 +64,6 @@ impl<S: ActorState> ActorKind<S> for SinkActor {
 /// message type. Say you have an actor like the one below. You can send messages to that actor
 /// like so:
 /// ```ignore
-/// # extern crate derive_more;
 /// # use std::collections::HashMap;
 /// # use troupe::prelude::*;
 /// # use derive_more::From;
@@ -73,19 +76,17 @@ impl<S: ActorState> ActorKind<S> for SinkActor {
 ///     Get(usize, OneshotSender<Option<String>>),
 ///     Delete(usize),
 /// }
-/// # #[async_trait]
+///
 /// # impl ActorState for CacheState {
+/// #   type ActorKind = SinkActor;
 /// #   type Message = CacheCommand;
-/// #   type ActorType = SinkActor;
-/// #   type Permanence = Permanent;
-/// #   type Output = ();
 /// #
 /// #   async fn process(&mut self, scheduler: &mut Scheduler<Self>, msg: Self::Message) { () }
 /// # }
+/// // `SinkActor`'s config is `()`, so the builder can be launched directly.
+/// let client: SinkClient<CacheCommand> = ActorBuilder::new(CacheState::default()).launch();
 ///
-/// let client = ActorBuilder::new(CacheState::default()).launch();
-///
-/// // Sends CacheCommand::Inset(42, "Hello world")
+/// // Sends CacheCommand::Insert(42, "Hello world")
 /// client.send((42, String::from("Hello World")));
 /// // Sends CacheCommand::Get(42, OneshotSender) and returns a tracker which will listen for a
 /// // response from the actor.

@@ -28,7 +28,9 @@ Do note that actor communication uses `tokio`'s channels regardless of the async
 The heart of a `troupe` actor is a state type and a message type.
 Let's take a simple cache as an example:
 ```rust
-pub struct Cache(HashMap<Uuid, YourData>);
+pub struct Cache {
+    inner: HashMap<Uuid, YourData>,
+}
 
 pub enum CacheCommand {
     Insert(Uuid, YourData),
@@ -40,11 +42,8 @@ pub enum CacheCommand {
 The message type encapsulates how the state can change and what data the actor has to process. These messages are sent from various source to be processed by the state. To finish the actor, `Cache` just has to implement the `ActorState` trait.
 ```rust
 impl ActorState for Cache {
-    type Permanence = Permanent;
-    type ActorType = SinkActor;
-
+    type ActorKind = SinkActor;
     type Message = CacheCommand;
-    type Output = ();
 
     async fn process(&mut self, _: &mut Scheduler<Self>, msg: CacheCommand) {
         match msg {
@@ -53,7 +52,7 @@ impl ActorState for Cache {
             }
             CacheCommand::Get(key, send) => {
                 let _ = send.send(self.inner.get(&key).cloned());
-						}
+            }
             CacheCommand::Delete(key) => {
                 self.inner.remove(&key);
             }
@@ -62,18 +61,28 @@ impl ActorState for Cache {
 }
 ```
 
-`ActorState` has several other associated types beyond the message type.
-These types are mostly marker types and inform how other parts of your program should interact with the actor.
-This communication is done through a client, which is created when the actor is launched.
-The associated `ActorType` type tells the client if the actor expects messages to be sent to it or if messages will be broadcast from the actor (or both).
-The associated `Permanence` type informs the client if it should expect the actor to close at any point.
-Lastly, the associated `Output` type is only used for actor that broadcast messages, in which case the actor will broadcast messages of the `Output` type.
+Beyond the message type, `ActorState` has one other associated type: its `ActorKind`.
+Where the state describes how the actor reacts to messages, the kind describes how messages get into and out of the actor.
+`troupe` ships three kinds: `SinkActor` for actors that only receive messages, `StreamActor` for actors that only broadcast them, and `JointActor` for actors that do both.
+
+The kind is not just a label.
+When the actor is launched, its kind is constructed, and that construction does three things.
+It builds the client that is handed back to the caller, it attaches whatever inbound streams that client needs (such as the MPSC channel behind a `SinkClient`), and it holds whatever state the actor needs in order to send messages back out (such as the broadcast channel behind a `StreamClient`).
+That last piece is stored in the scheduler, which derefs to the kind, so a stream or joint actor broadcasts by simply calling `scheduler.broadcast(msg)`.
+
+A kind can also require configuration via its associated `Config` type, which is handed to the builder with `ActorBuilder::config` before launching.
+All three of the kinds above use `()` here, so they can be launched directly.
+
+Because `ActorKind` is a public trait, other message-passing patterns can be modelled without changing the scheduler or the builder.
+Clients with built-in back pressure or an SPSC-style client, for example, are each just a new kind and its client type.
 
 Once running, `troupe` pairs every actor state with a scheduler.
 The scheduler is responsible for managing futures that the state queues and attached streams of message.
 The queued futures will be polled at the same time that the scheduler waits for inbound messages.
-Most actors have one attached stream by default, the channel used to communicate between the client and the actor.
-Client message streams use tokio MPSC-style channels, but actors can add any stream that yield messages that can be converted into the actor's message type (such as socket connections).
+Sink and joint actors start out with one attached stream, the channel used to communicate between the client and the actor, which their `ActorKind` attaches at launch.
+Client message streams use tokio MPSC-style channels, but actors can add any stream that yield messages that can be converted into the actor's message type (such as socket connections), either up front with `ActorBuilder::attach_stream` or at any point afterwards with `Scheduler::attach_stream`.
+A stream actor has no client-backed channel, so all of its messages come from streams and futures added this way.
+The scheduler also holds the actor's kind and derefs to it, which is how a state reaches methods like `broadcast`.
 Conceptually, the scheduler-actor relationship can be model as:
 ```
  _____________________________________________
@@ -99,18 +108,13 @@ Unlike a `SinkClient`, a `StreamClient` does not directly support any type of me
 It does, however, implement the [`Stream`](https://docs.rs/futures/latest/futures/stream/trait.Stream.html) trait.
 Lastly, a `JointClient` is both a `SinkClient` and a `StreamClient` put together.
 A `JointClient` can be decomposed into one or both of the other clients.
-Note, the actor type defines what kind of clients can be constructed, so you can not, for example, construct a `StreamClient` for an actor that will never broadcast a message.
+Note, the actor's kind defines what kind of client is constructed, so you can not, for example, get a `StreamClient` for an actor that will never broadcast a message.
 
-The last major component of the `troupe` actor model is permanence.
-Some actors are designed to run forever.
-These are called `Permanent` actors.
-Other actors are designed to run for some time (perhaps a long time) and then close.
-These are called `Transient` actors.
-This distinction largely serves to help with the ergonomics of interacting with actors.
-If an actor is designed to never shutdown, then the oneshot channels used for request-response style messages can be safely unwrapped.
-The same is not true for `Transient` actors.
+Actors do not run forever.
+An actor can retire itself at any point by calling `Scheduler::shutdown` (or `Scheduler::shutdown_and_finish`, which lets the futures the scheduler is managing for it run to completion first).
+Because of this, the response to a request-response style message is not guaranteed to arrive, so awaiting a `Tracker` yields an `Option`.
 
-Regardless of the permanence of the actor, all actors might exhaust their source of messages.
+Actors might also exhaust their source of messages.
 This happens when all streams have ran dry and no message-yeilding futures are queued.
 When this happens, there is built-in "garbage collection" for troupe actors.
 The scheduler will mark an actor as "dead" and then shutdown the actor process if it ever reaches this state.
@@ -119,14 +123,13 @@ For `SinkActors`, this can only occur if all message-sending clients have been d
 # Backwards Compatibility
 Troupe is currently experimental and subject to potential breaking changes (with due consideration).
 Breaking changes might occur to improve API ergonomics, to tweak the actor model, or to use new Rust language features.
-In particular, there are several language features that will be used improve this crate upon stabilization:
- - [`async fn` in traits](https://rust-lang.github.io/async-book/07_workarounds/05_async_in_traits.html)
- - [specialization](https://rust-lang.github.io/rfcs/1210-impl-specialization.html)
- - [associate-type defaults](https://rust-lang.github.io/rfcs/2532-associated-type-defaults.html)
+In particular, there are still language features that would improve this crate upon stabilization:
+ - [async fn in traits with `Send` bounds](https://rust-lang.github.io/rfcs/3654-return-type-notation.html)
+ - [associated-type defaults](https://rust-lang.github.io/rfcs/2532-associated-type-defaults.html)
 
-The stabilization of the first two present garunteed breaking changes for this crate but will drastically improve usability and ergonomics.
-Specialization will enable the `ActorBuilder` to present identically-named methods for launching the actor while returning the appropiate client type.
-The stabilization of `async fn` in traits will allow for the loosening of constraints on `ActorState`s in WASM contexts, allowing them to just be `'static` instead of `'static + Send`.
+`ActorState`'s methods are written as `-> impl MaybeSendFuture<Output = _>` rather than as plain `async fn` so that the `Send` bound can be dropped on WASM targets.
+A stable way to write a maybe-`Send` `async fn` in a trait would let that workaround, and the `Sendable` bound it carries, be removed.
+Associated-type defaults would let `ActorKind::Config` default to `()`, so kinds that need no configuration would not have to spell it out.
 
 # Future Work
 Currently, `troupe` only provides a framework for building actors.

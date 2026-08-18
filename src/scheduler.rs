@@ -26,8 +26,21 @@ type FuturesCollection<T> = FuturesUnordered<Pin<Box<dyn SendableFuture<Output =
 #[allow(type_alias_bounds)]
 pub(crate) type ActorStream<M: Sendable> = Box<dyn SendableFusedStream<Item = M>>;
 
-/// The primary bookkeeper for the actor. The state attach stream and queue manage futures that
-/// will be managed by the Scheduler.
+/// The primary bookkeeper for the actor. Everything that can produce a message for the actor lives
+/// here: the streams that have been attached to it and the futures that it has queued. An
+/// [`ActorState`](crate::ActorState) is handed a `&mut Scheduler` in each of its methods and uses
+/// it to attach more streams ([`attach_stream`](Scheduler::attach_stream)), queue more work
+/// ([`queue_task`](Scheduler::queue_task), [`manage_future`](Scheduler::manage_future),
+/// [`schedule`](Scheduler::schedule)), and ask to be shut down
+/// ([`shutdown`](Scheduler::shutdown), [`shutdown_and_finish`](Scheduler::shutdown_and_finish)).
+///
+/// The scheduler also holds the actor's [`ActorKind`](crate::ActorKind) and [`Deref`]s to it. This
+/// is how a state reaches whatever its kind offers for talking back to clients: for a
+/// [`StreamActor`](crate::stream::StreamActor) or [`JointActor`](crate::joint::JointActor), that
+/// is `broadcast`, so `scheduler.broadcast(msg)` sends a message to every listening client. A
+/// [`SinkActor`](crate::sink::SinkActor) has no such methods, so a sink actor's scheduler simply
+/// offers nothing extra.
+///
 /// The scheduler also tracks if it is possible that no other message will be
 /// yielded for the actor to process. If it finds itself in a state where all streams are closed
 /// and there are no queued futures, it will close the actor; otherwise, the deadlocked actor will
@@ -53,7 +66,8 @@ pub struct Scheduler<A: ActorState> {
     future_count: usize,
     /// Tracks the status of the scheduler, mostly used to track how the state wants to shutdown.
     status: SchedulerStatus,
-    /// Used to customize outbound messages.
+    /// The actor's kind. This holds whatever state the kind needs to communicate with its clients
+    /// (such as a broadcast sender) and is exposed to the actor state via `Deref`/`DerefMut`.
     actor_kind: A::ActorKind,
 }
 
