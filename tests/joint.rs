@@ -25,11 +25,7 @@ impl ActorState for DummyJoint {
         self.started.take().unwrap().send(Started).unwrap();
     }
 
-    async fn process(
-        &mut self,
-        scheduler: &mut Scheduler<Self>,
-        msg: Self::Message,
-    ) {
+    async fn process(&mut self, scheduler: &mut Scheduler<Self>, msg: Self::Message) {
         scheduler.broadcast(msg);
     }
 

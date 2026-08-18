@@ -55,7 +55,9 @@ impl<M: Sendable + Clone> StreamActor<M> {
         #[cfg(not(target_family = "wasm"))]
         let _ = self.broadcast.send(msg.into());
         #[cfg(target_family = "wasm")]
-        let _ = self.broadcast.send(send_wrapper::SendWrapper::new(msg.into()));
+        let _ = self
+            .broadcast
+            .send(send_wrapper::SendWrapper::new(msg.into()));
     }
 }
 

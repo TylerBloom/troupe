@@ -13,10 +13,7 @@ use instant::Instant;
 use pin_project::pin_project;
 
 use crate::{
-    compat::{
-        sleep_until, spawn_task, Sendable, SendableFusedStream, SendableFuture,
-        Sleep,
-    },
+    compat::{sleep_until, spawn_task, Sendable, SendableFusedStream, SendableFuture, Sleep},
     ActorState,
 };
 
