@@ -1,16 +1,20 @@
 //! Actors that broadcast messages.
 
-use std::{
-    fmt::Debug,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::fmt::Debug;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 
-use futures::{ready, Stream, StreamExt};
+use futures::ready;
+use futures::Stream;
+use futures::StreamExt;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
-use crate::{compat::Sendable, ActorKind, ActorState, Scheduler};
+use crate::compat::Sendable;
+use crate::ActorKind;
+use crate::ActorState;
+use crate::Scheduler;
 
 #[cfg(not(target_family = "wasm"))]
 pub(crate) type Broadcastee<M> = M;

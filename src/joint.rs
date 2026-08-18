@@ -1,20 +1,23 @@
 //! Actors that both can be sent messages and broadcast messages.
 
-use std::{
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 
 use futures::Stream;
 use pin_project::pin_project;
 use tokio::sync::broadcast;
 
-use crate::{
-    compat::Sendable,
-    sink::{SinkActor, SinkClient, Tracker},
-    stream::{Broadcastee, StreamActor, StreamClient},
-    ActorKind, ActorState, Scheduler,
-};
+use crate::compat::Sendable;
+use crate::sink::SinkActor;
+use crate::sink::SinkClient;
+use crate::sink::Tracker;
+use crate::stream::Broadcastee;
+use crate::stream::StreamActor;
+use crate::stream::StreamClient;
+use crate::ActorKind;
+use crate::ActorState;
+use crate::Scheduler;
 
 use crate::OneshotSender;
 

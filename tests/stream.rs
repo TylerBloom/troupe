@@ -1,7 +1,9 @@
 use futures::StreamExt;
-use instant::{Duration, Instant};
+use instant::Duration;
+use instant::Instant;
 use tokio::sync::oneshot::error::TryRecvError;
-use troupe::{compat::sleep_for, prelude::*};
+use troupe::compat::sleep_for;
+use troupe::prelude::*;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Started;

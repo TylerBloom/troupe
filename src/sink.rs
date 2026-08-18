@@ -1,18 +1,21 @@
 //! Actors that are only sent messages (either fire-and-forget messages or request-response
 //! messages).
-use std::{
-    fmt::Debug,
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::fmt::Debug;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 
 use futures::stream::StreamExt;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
+use crate::oneshot_channel;
+use crate::ActorKind;
+use crate::ActorState;
 use crate::OneshotReceiver;
-use crate::{oneshot_channel, ActorKind, ActorState, OneshotSender, Scheduler};
+use crate::OneshotSender;
+use crate::Scheduler;
 
 /// A marker type used by the [`ActorBuilder`](crate::ActorBuilder) to know what kind of
 /// [`ActorState`](crate::ActorState) it is dealing with. A sink actor is one that receives

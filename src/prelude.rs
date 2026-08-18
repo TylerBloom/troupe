@@ -1,11 +1,15 @@
 //! Re-exports of commonly used items.
 
-pub use crate::{
-    compat::SendableFuture,
-    joint::{JointActor, JointClient},
-    oneshot_channel,
-    scheduler::Scheduler,
-    sink::{SinkActor, SinkClient},
-    stream::{StreamActor, StreamClient},
-    ActorBuilder, ActorState, OneshotReceiver, OneshotSender,
-};
+pub use crate::compat::SendableFuture;
+pub use crate::joint::JointActor;
+pub use crate::joint::JointClient;
+pub use crate::oneshot_channel;
+pub use crate::scheduler::Scheduler;
+pub use crate::sink::SinkActor;
+pub use crate::sink::SinkClient;
+pub use crate::stream::StreamActor;
+pub use crate::stream::StreamClient;
+pub use crate::ActorBuilder;
+pub use crate::ActorState;
+pub use crate::OneshotReceiver;
+pub use crate::OneshotSender;

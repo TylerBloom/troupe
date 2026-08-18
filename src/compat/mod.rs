@@ -2,7 +2,9 @@
 
 use std::fmt::Debug;
 
-use futures::{stream::FusedStream, Future, Stream};
+use futures::stream::FusedStream;
+use futures::Future;
+use futures::Stream;
 
 #[cfg(not(target_family = "wasm"))]
 mod native;
@@ -55,7 +57,13 @@ impl Debug for Sleep {
 mod test {
     // Import tests
     #[allow(unused_imports)]
-    use super::{sleep_for, sleep_until, spawn_task, Sendable};
+    use super::sleep_for;
+    #[allow(unused_imports)]
+    use super::sleep_until;
+    #[allow(unused_imports)]
+    use super::spawn_task;
+    #[allow(unused_imports)]
+    use super::Sendable;
 
     // Impl trait tests
 }

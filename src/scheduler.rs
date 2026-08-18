@@ -1,21 +1,25 @@
-use std::{
-    future::Future,
-    ops::{Deref, DerefMut},
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::future::Future;
+use std::ops::Deref;
+use std::ops::DerefMut;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 
-use futures::{
-    stream::{select_all, FuturesUnordered, SelectAll},
-    FutureExt, StreamExt,
-};
+use futures::stream::select_all;
+use futures::stream::FuturesUnordered;
+use futures::stream::SelectAll;
+use futures::FutureExt;
+use futures::StreamExt;
 use instant::Instant;
 use pin_project::pin_project;
 
-use crate::{
-    compat::{sleep_until, spawn_task, Sendable, SendableFusedStream, SendableFuture, Sleep},
-    ActorState,
-};
+use crate::compat::sleep_until;
+use crate::compat::spawn_task;
+use crate::compat::Sendable;
+use crate::compat::SendableFusedStream;
+use crate::compat::SendableFuture;
+use crate::compat::Sleep;
+use crate::ActorState;
 
 type FuturesCollection<T> = FuturesUnordered<Pin<Box<dyn SendableFuture<Output = T>>>>;
 

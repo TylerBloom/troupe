@@ -23,13 +23,13 @@ pub use async_std::*;
 #[cfg(feature = "tokio")]
 mod tokio {
     use crate::compat::SendableFuture;
-    use instant::{Duration, Instant};
+    use instant::Duration;
+    use instant::Instant;
     use pin_project::pin_project;
-    use std::{
-        future::Future,
-        pin::Pin,
-        task::{Context, Poll},
-    };
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::Context;
+    use std::task::Poll;
 
     use super::super::Sendable;
 
@@ -71,12 +71,12 @@ mod tokio {
 mod async_std {
     use crate::compat::SendableFuture;
     use futures::FutureExt;
-    use instant::{Duration, Instant};
-    use std::{
-        future::Future,
-        pin::Pin,
-        task::{Context, Poll},
-    };
+    use instant::Duration;
+    use instant::Instant;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::Context;
+    use std::task::Poll;
 
     use super::super::Sendable;
 

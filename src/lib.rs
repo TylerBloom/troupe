@@ -55,13 +55,16 @@ pub mod stream;
 
 use futures::StreamExt;
 
-use compat::{MaybeSendFuture, Sendable, SendableFusedStream};
-use scheduler::{ActorRunner, ActorStream};
+use compat::MaybeSendFuture;
+use compat::Sendable;
+use compat::SendableFusedStream;
+use scheduler::ActorRunner;
+use scheduler::ActorStream;
 
 pub use scheduler::Scheduler;
-pub use tokio::sync::oneshot::{
-    channel as oneshot_channel, Receiver as OneshotReceiver, Sender as OneshotSender,
-};
+pub use tokio::sync::oneshot::channel as oneshot_channel;
+pub use tokio::sync::oneshot::Receiver as OneshotReceiver;
+pub use tokio::sync::oneshot::Sender as OneshotSender;
 
 /// The core abstraction of the actor model. An [`ActorState`] sits at the heart of every actor. It
 /// processes messages, queues futures, and attaches streams in the [`Scheduler`], and it can
