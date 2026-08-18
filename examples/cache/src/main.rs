@@ -13,18 +13,21 @@ async fn main() {
     // Awaiting a `Tracker` yields an `Option` because the actor may have shut down before it could
     // respond. Here, the actor's response is itself an `Option`, hence the `flatten`.
     let val = client.track(1).await.flatten().unwrap();
+    println!("Fetched: {val:?}");
     assert_eq!(val, "one");
     let answer = client
         .track((1, |s: &&str| s.to_string()))
         .await
         .flatten()
         .unwrap_or_default();
+    println!("Fetched: {answer:?}");
     assert_eq!(answer, "one");
     let answer = client
         .track((2, |s: &&str| s.to_string()))
         .await
         .flatten()
         .unwrap_or_default();
+    println!("Fetched: {answer:?}");
     assert_eq!(answer, "");
     client.send(1);
     let answer = client
@@ -32,5 +35,6 @@ async fn main() {
         .await
         .flatten()
         .unwrap_or_default();
+    println!("Fetched: {answer:?}");
     assert_eq!(answer, "");
 }

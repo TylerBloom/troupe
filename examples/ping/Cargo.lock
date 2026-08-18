@@ -122,15 +122,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb1d22c66e66d9d72e1758f0bd7d4fd0bee04cad842ee34587d68c07e45d088c"
 
 [[package]]
-name = "futures-example-imperative"
-version = "0.1.0"
-dependencies = [
- "derive_more",
- "tokio",
- "troupe",
-]
-
-[[package]]
 name = "futures-executor"
 version = "0.3.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -360,6 +351,15 @@ name = "pin-utils"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
+
+[[package]]
+name = "ping"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "tokio",
+ "troupe",
+]
 
 [[package]]
 name = "proc-macro2"
