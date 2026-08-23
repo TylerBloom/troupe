@@ -102,6 +102,13 @@ impl<A: ActorState> ActorRunner<A> {
 
     async fn run(mut self) {
         self.state.start_up(&mut self.scheduler).await;
+        // It is possible that nothing was originally scheduled in the scheduler or that the state
+        // consumed all messages during start up. Either way, the scheduler is empty and need the
+        // actor needs to be closed.
+        if self.scheduler.is_dead() {
+            self.close().await;
+            return
+        }
         loop {
             match self.scheduler.next().await {
                 Some(msg) => self.state.process(&mut self.scheduler, msg).await,
@@ -160,7 +167,7 @@ impl<A: ActorState> Scheduler<A> {
     }
 
     /// Yields the next message to be processed by the actor state.
-    async fn next(&mut self) -> Option<A::Message> {
+    pub async fn next(&mut self) -> Option<A::Message> {
         loop {
             if self.is_dead() {
                 return None;
