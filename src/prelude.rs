@@ -10,6 +10,7 @@ pub use crate::sink::SinkClient;
 pub use crate::stream::StreamActor;
 pub use crate::stream::StreamClient;
 pub use crate::ActorBuilder;
+pub use crate::ActorKind;
 pub use crate::ActorState;
 pub use crate::OneshotReceiver;
 pub use crate::OneshotSender;
