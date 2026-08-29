@@ -262,7 +262,7 @@ where
     /// No message is processed until after the actor is launched and [`ActorState::start_up`] has
     /// completed, including messages yielded by streams given to
     /// [`attach_stream`](ActorBuilder::attach_stream).
-    pub fn launch(self) -> K::Client {
+    pub fn spawn(self) -> K::Client {
         let Self {
             recv,
             config,
@@ -271,8 +271,8 @@ where
         let (kind, client, init) = A::ActorKind::construct(config);
         let mut runner = ActorRunner::new(state, kind);
         init(&mut runner.scheduler);
-        recv.into_iter().for_each(|r| runner.add_stream(r));
-        runner.launch();
+        recv.into_iter().for_each(|r| runner.attach_stream(r));
+        runner.spawn();
         client
     }
 }

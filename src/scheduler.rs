@@ -92,11 +92,11 @@ impl<A: ActorState> ActorRunner<A> {
         Self { scheduler, state }
     }
 
-    pub(crate) fn add_stream(&mut self, stream: ActorStream<A::Message>) {
+    pub(crate) fn attach_stream(&mut self, stream: ActorStream<A::Message>) {
         self.scheduler.attach_stream_inner(stream);
     }
 
-    pub(crate) fn launch(self) {
+    pub(crate) fn spawn(self) {
         spawn_task(self.run())
     }
 
@@ -202,7 +202,7 @@ impl<A: ActorState> Scheduler<A> {
     /// between the queued futures and attached streams. The first to yield an item is the first to
     /// be processed. For this reason, the futures queued this way must be `'static`, i.e. they
     /// can't reference the actor's state.
-    pub fn queue_task<F, I>(&mut self, fut: F)
+    pub fn await_message<F, I>(&mut self, fut: F)
     where
         F: SendableFuture<Output = I>,
         I: 'static + Into<A::Message>,
