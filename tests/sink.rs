@@ -1,9 +1,7 @@
 use instant::Duration;
 use tokio::sync::oneshot::error::TryRecvError;
-use troupe::{
-    compat::{sleep_for, SendableFuture},
-    prelude::*,
-};
+use troupe::compat::sleep_for;
+use troupe::prelude::*;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Started;
@@ -17,30 +15,17 @@ struct DummySink {
 }
 
 impl ActorState for DummySink {
-    type ActorType = SinkActor;
-    type Permanence = Permanent;
+    type ActorKind = SinkActor;
     type Message = ();
-    type Output = ();
 
-    fn start_up(
-        &mut self,
-        _: &mut Scheduler<Self>,
-    ) -> impl troupe::compat::SendableFuture<Output = ()> {
+    async fn start_up(&mut self, _: &mut Scheduler<Self>) {
         self.started.take().unwrap().send(Started).unwrap();
-        std::future::ready(())
     }
 
-    fn process(
-        &mut self,
-        _: &mut Scheduler<Self>,
-        _: Self::Message,
-    ) -> impl SendableFuture<Output = ()> {
-        std::future::ready(())
-    }
+    async fn process(&mut self, _: &mut Scheduler<Self>, _: Self::Message) {}
 
-    fn finalize(self, _: &mut Scheduler<Self>) -> impl SendableFuture<Output = ()> {
+    async fn finalize(self, _: &mut Scheduler<Self>) {
         self.completed.send(Completed).unwrap();
-        std::future::ready(())
     }
 }
 

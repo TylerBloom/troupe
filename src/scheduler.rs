@@ -1,42 +1,46 @@
-#[cfg(target_family = "wasm")]
-use send_wrapper::SendWrapper;
+use std::future::Future;
+use std::ops::Deref;
+use std::ops::DerefMut;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 
-use futures::{
-    stream::{select_all, Fuse, FusedStream, FuturesUnordered, SelectAll},
-    FutureExt, Stream, StreamExt,
-};
+use futures::stream::select_all;
+use futures::stream::FuturesUnordered;
+use futures::stream::SelectAll;
+use futures::FutureExt;
+use futures::StreamExt;
 use instant::Instant;
 use pin_project::pin_project;
-use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
-use tokio_stream::wrappers::UnboundedReceiverStream;
 
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
-
-use crate::{
-    compat::{
-        sleep_until, spawn_task, Sendable, SendableAnyMap, SendableFusedStream, SendableFuture,
-        SendableStream, Sleep,
-    },
-    sink::SinkClient,
-    ActorState, Transient,
-};
+use crate::compat::sleep_until;
+use crate::compat::spawn_task;
+use crate::compat::Sendable;
+use crate::compat::SendableFusedStream;
+use crate::compat::SendableFuture;
+use crate::compat::Sleep;
+use crate::ActorState;
 
 type FuturesCollection<T> = FuturesUnordered<Pin<Box<dyn SendableFuture<Output = T>>>>;
 
-/// Encapulates the different states a scheduler can be. Largely used to communicate how a state
-/// wishes to shutdown.
-enum SchedulerStatus {
-    Alive,
-    Marked,
-    MarkedToFinish,
-}
+#[allow(type_alias_bounds)]
+pub(crate) type ActorStream<M: Sendable> = Box<dyn SendableFusedStream<Item = M>>;
 
-/// The primary bookkeeper for the actor. The state attach stream and queue manage futures that
-/// will be managed by the Scheduler.
+/// The primary bookkeeper for the actor. Everything that can produce a message for the actor lives
+/// here: the streams that have been attached to it and the futures that it has queued. An
+/// [`ActorState`](crate::ActorState) is handed a `&mut Scheduler` in each of its methods and uses
+/// it to attach more streams ([`attach_stream`](Scheduler::attach_stream)), queue more work
+/// ([`queue_task`](Scheduler::queue_task), [`manage_future`](Scheduler::manage_future),
+/// [`schedule`](Scheduler::schedule)), and ask to be shut down
+/// ([`shutdown`](Scheduler::shutdown), [`shutdown_and_finish`](Scheduler::shutdown_and_finish)).
+///
+/// The scheduler also holds the actor's [`ActorKind`](crate::ActorKind) and [`Deref`]s to it. This
+/// is how a state reaches whatever its kind offers for talking back to clients: for a
+/// [`StreamActor`](crate::stream::StreamActor) or [`JointActor`](crate::joint::JointActor), that
+/// is `broadcast`, so `scheduler.broadcast(msg)` sends a message to every listening client. A
+/// [`SinkActor`](crate::sink::SinkActor) has no such methods, so a sink actor's scheduler simply
+/// offers nothing extra.
+///
 /// The scheduler also tracks if it is possible that no other message will be
 /// yielded for the actor to process. If it finds itself in a state where all streams are closed
 /// and there are no queued futures, it will close the actor; otherwise, the deadlocked actor will
@@ -47,16 +51,11 @@ enum SchedulerStatus {
 #[allow(missing_debug_implementations)]
 pub struct Scheduler<A: ActorState> {
     /// The inbound streams to the actor.
-    recv: SelectAll<Fuse<ActorStream<A::Message>>>,
+    recv: SelectAll<ActorStream<A::Message>>,
     /// Futures that the actor has queued that will yield a message.
     queue: FuturesCollection<A::Message>,
     /// Futures that yield nothing that the scheduler will manage and poll for the actor.
     tasks: FuturesCollection<()>,
-    /// The manager for outbound messages that will be broadcast from the actor.
-    outbound: Option<OutboundQueue<A::Output>>,
-    /// Stores edges in the form of `EdgeType`s. This is used to access connections to other actors
-    /// at runtime without needing to embed them into the actor state directly.
-    edges: SendableAnyMap,
     /// The number of stream that could yield a message for the actor to process. Once this and the
     /// `future_count` hit both reach zero, the actor is dead as it can no longer process any
     /// messages.
@@ -67,66 +66,49 @@ pub struct Scheduler<A: ActorState> {
     future_count: usize,
     /// Tracks the status of the scheduler, mostly used to track how the state wants to shutdown.
     status: SchedulerStatus,
+    /// The actor's kind. This holds whatever state the kind needs to communicate with its clients
+    /// (such as a broadcast sender) and is exposed to the actor state via `Deref`/`DerefMut`.
+    actor_kind: A::ActorKind,
 }
 
-struct OutboundQueue<M> {
-    #[cfg(not(target_family = "wasm"))]
-    send: broadcast::Sender<M>,
-    #[cfg(target_family = "wasm")]
-    send: broadcast::Sender<SendWrapper<M>>,
-}
-
-impl<M: Sendable + Clone> OutboundQueue<M> {
-    #[cfg(not(target_family = "wasm"))]
-    fn new(send: broadcast::Sender<M>) -> Self {
-        Self { send }
-    }
-
-    #[cfg(target_family = "wasm")]
-    fn new(send: broadcast::Sender<SendWrapper<M>>) -> Self {
-        Self { send }
-    }
-
-    fn send(&mut self, msg: M) {
-        #[cfg(target_family = "wasm")]
-        let msg = SendWrapper::new(msg);
-        let _ = self.send.send(msg);
-    }
+/// Encapulates the different states a scheduler can be. Largely used to communicate how a state
+/// wishes to shutdown.
+enum SchedulerStatus {
+    Alive,
+    Marked,
+    MarkedToFinish,
 }
 
 /// The container for the actor state and its scheduler. The runner polls the scheduler, aids in
 /// bookkeeping if the actor is dead or not, and passes messages off to the state.
 pub(crate) struct ActorRunner<A: ActorState> {
     state: A,
-    scheduler: Scheduler<A>,
+    pub(super) scheduler: Scheduler<A>,
 }
 
 impl<A: ActorState> ActorRunner<A> {
-    pub(crate) fn new(state: A, edges: SendableAnyMap) -> Self {
-        let scheduler = Scheduler::new(edges);
+    pub(crate) fn new(state: A, kind: A::ActorKind) -> Self {
+        let scheduler = Scheduler::new(kind);
         Self { scheduler, state }
     }
 
-    #[cfg(not(target_family = "wasm"))]
-    pub(crate) fn add_broadcaster(&mut self, broad: broadcast::Sender<A::Output>) {
-        self.scheduler.outbound = Some(OutboundQueue::new(broad));
-    }
-
-    #[cfg(target_family = "wasm")]
-    pub(crate) fn add_broadcaster(&mut self, broad: broadcast::Sender<SendWrapper<A::Output>>) {
-        self.scheduler.outbound = Some(OutboundQueue::new(broad));
-    }
-
-    pub(crate) fn add_stream(&mut self, stream: ActorStream<A::Message>) {
+    pub(crate) fn attach_stream(&mut self, stream: ActorStream<A::Message>) {
         self.scheduler.attach_stream_inner(stream);
     }
 
-    pub(crate) fn launch(self) {
+    pub(crate) fn spawn(self) {
         spawn_task(self.run())
     }
 
     async fn run(mut self) {
         self.state.start_up(&mut self.scheduler).await;
+        // It is possible that nothing was originally scheduled in the scheduler or that the state
+        // consumed all messages during start up. Either way, the scheduler is empty and need the
+        // actor needs to be closed.
+        if self.scheduler.is_dead() {
+            self.close().await;
+            return
+        }
         loop {
             match self.scheduler.next().await {
                 Some(msg) => self.state.process(&mut self.scheduler, msg).await,
@@ -149,16 +131,16 @@ impl<A: ActorState> ActorRunner<A> {
 
 impl<A: ActorState> Scheduler<A> {
     /// The constructor for the scheduler.
-    fn new(edges: SendableAnyMap) -> Self {
+    fn new(actor_kind: A::ActorKind) -> Self {
         let recv = select_all([]);
         let queue = FuturesCollection::new();
         let tasks = FuturesCollection::new();
+
         Self {
             recv,
             queue,
             tasks,
-            edges,
-            outbound: None,
+            actor_kind,
             stream_count: 0,
             future_count: 0,
             status: SchedulerStatus::Alive,
@@ -185,7 +167,7 @@ impl<A: ActorState> Scheduler<A> {
     }
 
     /// Yields the next message to be processed by the actor state.
-    async fn next(&mut self) -> Option<A::Message> {
+    pub async fn next(&mut self) -> Option<A::Message> {
         loop {
             if self.is_dead() {
                 return None;
@@ -220,9 +202,9 @@ impl<A: ActorState> Scheduler<A> {
     /// between the queued futures and attached streams. The first to yield an item is the first to
     /// be processed. For this reason, the futures queued this way must be `'static`, i.e. they
     /// can't reference the actor's state.
-    pub fn queue_task<F, I>(&mut self, fut: F)
+    pub fn await_message<F, I>(&mut self, fut: F)
     where
-        F: Sendable + Future<Output = I>,
+        F: SendableFuture<Output = I>,
         I: 'static + Into<A::Message>,
     {
         self.future_count += 1;
@@ -247,23 +229,23 @@ impl<A: ActorState> Scheduler<A> {
 
     /// Attaches a stream that will be polled and managed by the scheduler. Messages yielded by the
     /// streams must be able to be converted into the actor's message type so that the actor can
-    /// process it. The given stream must be a [`FusedStream`]; however, the scheduler requires a
+    /// process it. The given stream must be a [`FusedStream`](futures::stream::FusedStream); however, the scheduler requires a
     /// stronger invariant than that given by `FusedStream`. The scheduler will mark a stream as
     /// "done" once the stream yields its first `None`. After that, the scheduler will never poll
     /// that stream again.
     pub fn attach_stream<S, I>(&mut self, stream: S)
     where
-        S: SendableStream<Item = I> + FusedStream,
+        S: SendableFusedStream<Item = I>,
         I: Into<A::Message>,
     {
-        let stream = ActorStream::Secondary(Box::new(stream.map(|m| m.into())));
+        let stream = Box::new(stream.map(|m| m.into()));
         self.attach_stream_inner(stream)
     }
 
     /// Adds an actor stream to the scheduler.
     fn attach_stream_inner(&mut self, stream: ActorStream<A::Message>) {
         self.stream_count += 1;
-        self.recv.push(stream.fuse());
+        self.recv.push(stream);
     }
 
     /// Schedules a message to be given to the actor to process at a given time.
@@ -275,79 +257,6 @@ impl<A: ActorState> Scheduler<A> {
         self.queue.push(Box::pin(Timer::new(deadline, msg.into())));
     }
 
-    /// Broadcasts a message to all listening clients. If the message fails to send, the message
-    /// will be dropped.
-    ///
-    /// Note: This method does nothing if the actor is a [`SinkActor`](crate::sink::SinkActor).
-    /// [`StreamActor`](crate::stream::StreamActor)s and [`JointActor`](crate::joint::JointActor)
-    /// will be able to broadcast.
-    pub fn broadcast<M>(&mut self, msg: M)
-    where
-        M: Into<A::Output>,
-    {
-        if let Some(out) = self.outbound.as_mut() {
-            out.send(msg.into())
-        }
-    }
-
-    /// Adds a client to the set of connections to other actors, which the state can access later.
-    pub fn add_edge<P: 'static + Send, M: 'static + Send>(&mut self, client: SinkClient<P, M>) {
-        _ = self.edges.insert(client);
-    }
-
-    /// Gets a reference to a sink client to another actor.
-    pub fn get_edge<P: 'static + Send, M: 'static + Send>(&self) -> Option<&SinkClient<P, M>> {
-        self.edges.get::<SinkClient<P, M>>()
-    }
-
-    /// Gets mutable reference to a sink client to another actor.
-    pub fn get_edge_mut<P: 'static + Send, M: 'static + Send>(
-        &mut self,
-    ) -> Option<&mut SinkClient<P, M>> {
-        self.edges.get_mut::<SinkClient<P, M>>()
-    }
-
-    /// Removes a client to the set of connections to other actors.
-    pub fn remove_edge<P: 'static + Send, M: 'static + Send>(&mut self) {
-        _ = self.edges.remove::<SinkClient<P, M>>();
-    }
-
-    /// Adds an arbitrary data to the set of connections to other actors, which the state can
-    /// access later. This method is intended to be used with containers hold that multiple clients
-    /// of the same type.
-    ///
-    /// For example, you can attach a series of actor clients that are indexed using a hashmap.
-    pub fn add_multi_edge<C: 'static + Send>(&mut self, container: C) {
-        _ = self.edges.insert(container);
-    }
-
-    /// Gets a reference to an arbitary type held in the container that holds connections to other
-    /// actors. This method is intended to be used with containers that hold multiple clients of
-    /// the same type.
-    ///
-    /// For example, you can store and access a series of actor clients that are indexed using a
-    /// hashmap.
-    pub fn get_multi_edge<C: 'static + Send>(&self) -> Option<&C> {
-        self.edges.get::<C>()
-    }
-
-    /// Gets a mutable reference to an arbitary type held in the container that holds connections to other
-    /// actors. This method is intended to be used with containers that hold multiple clients of
-    /// the same type.
-    pub fn get_multi_edge_mut<C: 'static + Send>(&mut self) -> Option<&mut C> {
-        self.edges.get_mut::<C>()
-    }
-
-    /// Adds a piece of arbitrary data from the set of connections to other actors.
-    pub fn remove_multi_edge<C: 'static + Send>(&mut self) {
-        _ = self.edges.remove::<C>();
-    }
-}
-
-impl<A> Scheduler<A>
-where
-    A: ActorState<Permanence = Transient>,
-{
     /// Marks the actor as ready to shutdown. After the state finishes processing the current
     /// message, actor process will shutdown. Any unprocessed messages will be dropped, all
     /// attached streams will be closed, all futures that will yield a message will be cancelled,
@@ -369,25 +278,23 @@ where
     }
 }
 
-impl<M: Sendable> From<UnboundedReceiver<M>> for ActorStream<M> {
-    fn from(value: UnboundedReceiver<M>) -> Self {
-        Self::Main(UnboundedReceiverStream::new(value))
+impl<A> Deref for Scheduler<A>
+where
+    A: ActorState,
+{
+    type Target = A::ActorKind;
+
+    fn deref(&self) -> &Self::Target {
+        &self.actor_kind
     }
 }
 
-pub(crate) enum ActorStream<M> {
-    Main(UnboundedReceiverStream<M>),
-    Secondary(Box<dyn SendableFusedStream<Item = M>>),
-}
-
-impl<M: Sendable> Stream for ActorStream<M> {
-    type Item = M;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match *self {
-            ActorStream::Main(ref mut stream) => Pin::new(stream).poll_next(cx),
-            ActorStream::Secondary(ref mut stream) => Pin::new(stream).poll_next(cx),
-        }
+impl<A> DerefMut for Scheduler<A>
+where
+    A: ActorState,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.actor_kind
     }
 }
 

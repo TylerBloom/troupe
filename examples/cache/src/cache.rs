@@ -21,20 +21,16 @@ pub enum CacheCommand<K, T> {
     Query(K, Box<dyn 'static + Send + FnOnce(Option<&T>)>),
 }
 
-#[async_trait]
 impl<K, T> ActorState for Cache<K, T>
 where
     K: 'static + Send + Hash + Eq,
     T: 'static + Send + Clone,
 {
+    /// This actor is a [`SinkActor`] as it does not broadcast anything. That kind gives us a
+    /// [`SinkClient`] when the actor is launched.
+    type ActorKind = SinkActor;
+
     type Message = CacheCommand<K, T>;
-
-    /// This actor is a [`SinkActor`] as it does not broadcast anything
-    type ActorType = SinkActor;
-
-    /// Sink actors don't output anything, so we can use a unit here. Ideally, [`ActorState`] would
-    /// have a type default for this.
-    type Output = ();
 
     async fn process(&mut self, _: &mut Scheduler<Self>, msg: CacheCommand<K, T>) {
         println!("Message received!!");

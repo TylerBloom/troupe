@@ -1,14 +1,15 @@
-use anymap2::any::Any;
 use futures::FutureExt;
-use gloo_timers::future::{sleep, TimeoutFuture};
-use instant::{Duration, Instant};
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use gloo_timers::future::sleep;
+use gloo_timers::future::TimeoutFuture;
+use instant::Duration;
+use instant::Instant;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 
-use super::{Sendable, SendableFuture};
+use super::Sendable;
+use super::SendableFuture;
 
 /* ------ Send workarounds ------ */
 
@@ -20,8 +21,6 @@ use super::{Sendable, SendableFuture};
 pub trait MaybeSend {}
 
 impl<T> MaybeSend for T {}
-
-pub(crate) type SendableAnyMap = anymap2::Map<dyn 'static + Any>;
 
 /* ------ General Utils ------ */
 

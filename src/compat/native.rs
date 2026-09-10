@@ -1,5 +1,3 @@
-use anymap2::any::Any;
-
 /* ------ Send workarounds ------ */
 
 /// This trait abstracts over put of the requirements for spawning an async task. In native async runtimes, a
@@ -10,8 +8,6 @@ use anymap2::any::Any;
 pub trait MaybeSend: Send {}
 
 impl<T> MaybeSend for T where T: Send {}
-
-pub(crate) type SendableAnyMap = anymap2::Map<dyn 'static + Send + Any>;
 
 /* ------ General Utils ------ */
 
@@ -27,13 +23,13 @@ pub use async_std::*;
 #[cfg(feature = "tokio")]
 mod tokio {
     use crate::compat::SendableFuture;
-    use instant::{Duration, Instant};
+    use instant::Duration;
+    use instant::Instant;
     use pin_project::pin_project;
-    use std::{
-        future::Future,
-        pin::Pin,
-        task::{Context, Poll},
-    };
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::Context;
+    use std::task::Poll;
 
     use super::super::Sendable;
 
@@ -75,12 +71,12 @@ mod tokio {
 mod async_std {
     use crate::compat::SendableFuture;
     use futures::FutureExt;
-    use instant::{Duration, Instant};
-    use std::{
-        future::Future,
-        pin::Pin,
-        task::{Context, Poll},
-    };
+    use instant::Duration;
+    use instant::Instant;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::Context;
+    use std::task::Poll;
 
     use super::super::Sendable;
 

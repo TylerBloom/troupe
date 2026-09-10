@@ -19,8 +19,8 @@ jobs:
         with:
           rust-version: nightly
           components: rustfmt
-      - uses: actions/checkout@v4
-      - run: cargo fmt --check
+      - uses: actions/checkout@v7
+      - run: cargo +nightly fmt --check
   wasm_build:
     needs: code_cleaniness_checks
     name: Wasm Tests
@@ -33,7 +33,9 @@ jobs:
         with:
           rust-version: ${{ matrix.rust }}
           targets: wasm32-unknown-unknown
-      - uses: actions/checkout@v4
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@v7
       - run: cargo build --target=wasm32-unknown-unknown --verbose
       - run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - run: wasm-pack test --headless --chrome --firefox --verbose
@@ -51,7 +53,9 @@ jobs:
         with:
           rust-version: ${{ matrix.rust }}
           components: rustfmt
-      - uses: actions/checkout@v4
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@v7
       - run: cargo fmt --check
       - run: cargo build --verbose
       - run: cargo test --verbose
@@ -62,8 +66,10 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     steps:
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Setup Rust
         uses: hecrj/setup-rust-action@v2
         with:

@@ -18,18 +18,14 @@ pub enum PingCommand {
     RequestAndRespond(OneshotSender<usize>),
 }
 
-#[async_trait]
 impl ActorState for Ping {
+    /// This actor is a [`SinkActor`] as it does not broadcast anything. That kind gives us a
+    /// [`SinkClient`] when the actor is launched.
+    type ActorKind = SinkActor;
+
     /// A message of type `T` must be `T: Into<PingCommand>` or `(T, OneshotSender<usize>):
     /// Into<PingCommand` in order to be sent to this actor.
     type Message = PingCommand;
-
-    /// This actor is a [`SinkActor`] as it does not broadcast anything.
-    type ActorType = SinkActor;
-
-    /// Sink actors don't output anything, so we can use a unit here. Ideally, [`ActorState`] would
-    /// have a type default for this.
-    type Output = ();
 
     async fn process(&mut self, _: &mut Scheduler<Self>, msg: PingCommand) {
         println!("Ping message receive: {msg}");
