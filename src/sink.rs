@@ -8,13 +8,11 @@ use std::task::Poll;
 
 use futures::stream::StreamExt;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-use crate::oneshot_channel;
 use crate::ActorKind;
 use crate::ActorState;
-use crate::OneshotReceiver;
-use crate::OneshotSender;
 use crate::Scheduler;
 
 /// The [`ActorKind`] for actors that only receive messages. A sink actor is one that receives
@@ -120,9 +118,9 @@ impl<M> SinkClient<M> {
     /// the actor is returned.
     pub fn track<I, O>(&self, msg: I) -> Tracker<O>
     where
-        M: From<(I, OneshotSender<O>)>,
+        M: From<(I, oneshot::Sender<O>)>,
     {
-        let (send, recv) = oneshot_channel();
+        let (send, recv) = oneshot::channel();
         let msg = M::from((msg, send));
         let _ = self.send(msg);
         Tracker::new(recv)
@@ -142,12 +140,12 @@ impl<M> Clone for SinkClient<M> {
 /// mean that the message was successfully received by the actor.
 #[derive(Debug)]
 pub struct Tracker<T> {
-    recv: OneshotReceiver<T>,
+    recv: oneshot::Receiver<T>,
 }
 
 impl<T> Tracker<T> {
     /// A constuctor for the tracker.
-    pub(crate) fn new(recv: OneshotReceiver<T>) -> Self {
+    pub(crate) fn new(recv: oneshot::Receiver<T>) -> Self {
         Self { recv }
     }
 }

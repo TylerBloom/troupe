@@ -7,6 +7,7 @@ use std::task::Poll;
 use futures::Stream;
 use pin_project::pin_project;
 use tokio::sync::broadcast;
+use tokio::sync::oneshot;
 
 use crate::compat::Sendable;
 use crate::sink::SinkActor;
@@ -18,8 +19,6 @@ use crate::stream::StreamClient;
 use crate::ActorKind;
 use crate::ActorState;
 use crate::Scheduler;
-
-use crate::OneshotSender;
 
 /// The [`ActorKind`] for actors that both receive and broadcast messages. A joint actor is one
 /// that acts as both a [`SinkActor`] and a [`StreamActor`]. Its clients, [`JointClient`]s, can
@@ -120,7 +119,7 @@ impl<I, O: Sendable + Clone> JointClient<I, O> {
     /// the actor is returned.
     pub fn track<M, R>(&self, msg: M) -> Tracker<R>
     where
-        I: From<(M, OneshotSender<R>)>,
+        I: From<(M, oneshot::Sender<R>)>,
     {
         self.send.track(msg)
     }
